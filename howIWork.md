@@ -1,12 +1,12 @@
-# How VRClaudeInterface Works
+# How GS Works
 
 An overview of the program: what it is, how the pieces fit together, and how a
 request flows from your voice/keyboard through Claude and back into the 3D scene.
 
 ## What it is
 
-VRClaudeInterface is a **WebXR (Meta Quest) app that lets you talk to Claude
-inside VR/AR and have Claude modify the 3D scene live**. You type or speak a
+GS is a **WebXR (Meta Quest) app that lets you talk to Claude
+inside VR and have Claude modify the 3D scene live**. You type or speak a
 request; Claude replies in a floating chat panel and can emit code that runs
 immediately in the scene (spawning objects, animating them, injecting UI).
 
@@ -38,7 +38,7 @@ Three moving parts:
 | `site-source/server.js` | Express server: static hosting + `/api/chat`, `/api/fix-code`, `/api/save-scene`, `/api/load-scene`. Holds the system prompts. |
 | `site-source/index.html` | DOM shell + styles: chat overlay (input/MIC/Send), status pill, `#ui-toggle`, export modal, and the WebXR `overlay-root`. |
 | `site-source/main.js` | The whole client app: scene setup, panels, input, speech, locomotion, and the vr-exec execution engine. |
-| `site-source/threejsAddons/ARButton.js` | Enter-AR button; requests the `immersive-ar` session with `local-floor` + `dom-overlay`. |
+| `site-source/threejsAddons/ARButton.js` | Enter-session button; requests the immersive WebXR session with `local-floor` + `dom-overlay`. |
 | `site-source/node_modules/three` | Three.js (loaded via the import map in `index.html`). |
 
 ## Startup & configuration
@@ -95,7 +95,7 @@ scene
 ├── chatPanel   (Claude's replies)
 ├── inputPanel  ([text][MIC][KEYS][Send])
 ├── keyboardPanel (in-scene QWERTY)
-├── sidePanel   (AR/VR toggle + color/brightness)
+├── sidePanel   (session/mode toggle + color/brightness)
 ├── scenePanel  (saved-scene manager)
 └── reticles (cursor rings)
 ```

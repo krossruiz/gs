@@ -1,8 +1,9 @@
-# VRClaudeInterface
+# GS
 
 A WebXR app that lets you talk to Claude (or a local Ollama model) inside
-VR/AR and have it modify the 3D scene live. See [howIWork.md](howIWork.md)
-for how the pieces fit together.
+VR and have it modify the 3D scene live. Live deploy:
+https://gs.krossruiz.workers.dev. See [howIWork.md](howIWork.md) for how the
+pieces fit together.
 
 ## Quick start
 
@@ -25,7 +26,7 @@ optional: browsers only treat a page as a "secure context" (required for
 WebXR) over plain `http://` when the address is `localhost` — the moment
 the Quest loads the site by your laptop's **LAN IP**
 (e.g. `192.168.1.10:3000`), that's not a secure context, and
-`navigator.xr` will report AR/VR as unsupported no matter how correctly
+`navigator.xr` will report VR as unsupported no matter how correctly
 everything else is configured. Serving HTTPS everywhere avoids that trap
 regardless of how you reach the server.
 
@@ -39,12 +40,12 @@ certificate authority.
 
 ## Headset setup
 
-### Quest 3 standalone (AR passthrough)
+### Quest 3 standalone (passthrough)
 
 Open the `https://` Network URL the launcher prints (e.g.
 `https://192.168.x.x:3000`) directly in the Meta Quest Browser on the
 headset, with both devices on the same WiFi — accepting the
-certificate warning once. The "ENTER AR" button uses passthrough so the
+certificate warning once. The enter button uses passthrough so the
 chat panels float in your real room.
 
 ### PCVR via Link / Air Link / SteamVR (Quest 3, Quest 2/Pro, Valve Index, HTC Vive, Windows Mixed Reality, ...)
@@ -66,7 +67,7 @@ For the PC's desktop browser to see the headset as a WebXR device at all,
    - Other PCVR headsets, or Quest via SteamVR: open SteamVR and make sure
      it's the active OpenXR runtime instead.
    - Installing/opening SteamVR commonly steals this setting from Meta
-     Quest Link, so re-check it if AR/VR suddenly stops being detected.
+     Quest Link, so re-check it if VR suddenly stops being detected.
 3. **You're using a WebXR-capable desktop browser** — recent Chrome or Edge.
    Firefox does not support WebXR by default.
 4. **You've accepted the self-signed certificate warning** on that browser
@@ -74,7 +75,7 @@ For the PC's desktop browser to see the headset as a WebXR device at all,
    page may fail to load at all rather than just lacking XR support.
 
 If any of these isn't true, `navigator.xr.isSessionSupported()` genuinely
-returns `false` for both AR and VR, and the button will read
-"VR/AR NOT SUPPORTED" — that's the browser correctly reporting no XR
+returns `false` for VR, and the button will read
+"VR NOT SUPPORTED" — that's the browser correctly reporting no XR
 runtime is available, not a bug in the page. Reload the page after fixing
 the runtime setting; the button re-checks support on load.
