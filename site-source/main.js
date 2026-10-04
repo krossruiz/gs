@@ -5826,6 +5826,7 @@ function updateUiToggleDOM() {
 //              (right stick / Q/E) follows the camera's tilted local up.
 // Right stick left/right yaws around world up (0, 1, 0), not the camera's tilted local up, in both movement modes, orbiting the camera world position so the view origin stays put.
 const _locoQuat = new THREE.Quaternion();
+const _locoRigQuat = new THREE.Quaternion();
 const _locoForward = new THREE.Vector3();
 const _locoRight = new THREE.Vector3();
 const _locoMove = new THREE.Vector3();
@@ -5866,7 +5867,14 @@ function applyLocomotionInput(dt, refCamera, mx, my, rx, ry) {
 	if (!player || locomotionMode === 'off' || dt <= 0) return;
 
 	if (mx !== 0 || my !== 0 || ry !== 0) {
-		refCamera.getWorldQuaternion(_locoQuat);
+		if (renderer.xr.isPresenting && viewOffset) {
+			const xrCam = renderer.xr.getCamera();
+			_locoQuat.copy(xrCam.quaternion);
+			viewOffset.getWorldQuaternion(_locoRigQuat);
+			_locoQuat.premultiply(_locoRigQuat);
+		} else {
+			refCamera.getWorldQuaternion(_locoQuat);
+		}
 		// View forward (camera local -Z), then pitch 0: keep only the XZ
 		// projection so translation follows yaw, not look up/down.
 		_locoForward.set(0, 0, -1).applyQuaternion(_locoQuat);
