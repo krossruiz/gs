@@ -5479,95 +5479,24 @@ async function sendMessage(userMessage) {
 }
 
 function updateStatus(text, className) {
-	statusElement.textContent = text;
-	statusElement.className = className || '';
-	updateHudStatus(text, className);
+	// Keep the text/class on #status for anything that reads it. The element
+	// stays hidden (see index.html); the head-locked HUD badge is not drawn.
+	if (statusElement) {
+		statusElement.textContent = text;
+		statusElement.className = className || '';
+	}
 }
 
 // ============================================================================
-// Head-locked HUD status badge (mirrors the DOM #status notification in VR/AR)
+// Head-locked HUD status badge — not drawn.
+// updateStatus() still records text on the hidden DOM #status element.
 // ============================================================================
-// A small badge parented to `hud` (a child of the camera), so head/motion
-// tracking keeps it pinned to the view. It sits in the lower-right periphery —
-// out of the focused center of vision — and only appears for active/transient
-// states, so the stage stays clean and it's cheap (the canvas is redrawn only
-// when the status text changes, and it's a tiny always-on-top plane).
 function createHudStatus() {
-	hudStatusCanvas = document.createElement('canvas');
-	hudStatusCanvas.width = 512;
-	hudStatusCanvas.height = 128;
-	hudStatusContext = hudStatusCanvas.getContext('2d');
-
-	hudStatusTexture = new THREE.CanvasTexture(hudStatusCanvas);
-	hudStatusTexture.minFilter = THREE.LinearFilter;
-	hudStatusTexture.magFilter = THREE.LinearFilter;
-
-	const geo = new THREE.PlaneGeometry(0.2, 0.05);
-	const mat = new THREE.MeshBasicMaterial({
-		map: hudStatusTexture,
-		transparent: true,
-		depthTest: false,  // draw over the scene like a notification overlay
-		depthWrite: false
-	});
-	hudStatusPanel = new THREE.Mesh(geo, mat);
-	// Head-locked, lower-right periphery, ~0.9 m ahead. As a child of `hud` it
-	// inherits the camera's orientation, so it always faces the user.
-	hudStatusPanel.position.set(0.4, -0.25, -0.9);
-	hudStatusPanel.renderOrder = 999;
-	hudStatusPanel.visible = false;
-	hud.add(hudStatusPanel);
+	// Intentionally does not add a mesh to `hud`.
 }
 
-function renderHudStatus(text, className) {
-	if (!hudStatusContext) return;
-	const ctx = hudStatusContext;
-	const W = hudStatusCanvas.width;
-	const H = hudStatusCanvas.height;
-
-	ctx.clearRect(0, 0, W, H);
-
-	let bg = 'rgba(30, 30, 40, 0.90)';
-	let dot = '#6366f1';
-	if (className === 'error') { bg = 'rgba(70, 22, 22, 0.92)'; dot = '#ef4444'; }
-	else if (className === 'connected') { bg = 'rgba(18, 48, 34, 0.92)'; dot = '#10b981'; }
-
-	ctx.fillStyle = bg;
-	roundRect(ctx, 0, 0, W, H, 28);
-	ctx.fill();
-
-	// Status dot
-	ctx.beginPath();
-	ctx.arc(44, H / 2, 15, 0, Math.PI * 2);
-	ctx.fillStyle = dot;
-	ctx.fill();
-
-	// Text, truncated to fit
-	ctx.fillStyle = '#ffffff';
-	ctx.font = '38px -apple-system, BlinkMacSystemFont, sans-serif';
-	ctx.textAlign = 'left';
-	ctx.textBaseline = 'middle';
-	let t = text;
-	const maxW = W - 96;
-	if (ctx.measureText(t).width > maxW) {
-		while (t.length > 1 && ctx.measureText(t + '…').width > maxW) t = t.slice(0, -1);
-		t += '…';
-	}
-	ctx.fillText(t, 76, H / 2 + 2);
-	ctx.textBaseline = 'alphabetic';
-
-	hudStatusTexture.needsUpdate = true;
-}
-
-// Show the badge for active/transient states; hide for idle to keep the view clean.
-function updateHudStatus(text, className) {
-	if (!hudStatusPanel) return;
-	if (displayOnlyMode) {
-		hudStatusPanel.visible = false;
-		return;
-	}
-	const idle = !text || text === 'Ready' || text === 'Connected';
-	hudStatusPanel.visible = !idle;
-	if (!idle) renderHudStatus(text, className);
+function updateHudStatus() {
+	if (hudStatusPanel) hudStatusPanel.visible = false;
 }
 
 // ============================================================================
@@ -5622,8 +5551,7 @@ function renderUiToggle() {
 }
 
 // Hide/show every main panel (3D) and the DOM chat overlay (windowed view). The
-// head-locked toggle button and the status badge stay visible so the UI can
-// always be brought back.
+// head-locked toggle button stays visible so the UI can always be brought back.
 function setUiCollapsed(collapsed) {
 	if (displayOnlyMode) collapsed = true;
 	uiCollapsed = collapsed;
@@ -6539,9 +6467,8 @@ function setImmersiveUiMode(immersive) {
 	const panels = [chatPanel, inputPanel, sidePanel, scenePanel];
 	for (const p of panels) if (p) p.visible = immersive && !displayOnlyMode;
 	if (keyboardPanel) keyboardPanel.visible = immersive && !keyboardCollapsed && !displayOnlyMode;
-	// The head-locked hud (status badge + Hide/Show-UI panel) only makes sense
-	// with a headset; the desktop equivalents are the DOM #status pill and
-	// #ui-toggle button, already shown outside the 3D scene.
+	// The head-locked hud (Hide/Show-UI panel) only makes sense with a headset;
+	// the desktop equivalent is the #ui-toggle button. The status badge is not shown.
 	hud.visible = immersive && !displayOnlyMode;
 	// Mouse orbit/pan/zoom only makes sense windowed — the headset pose drives
 	// the camera during an XR session.

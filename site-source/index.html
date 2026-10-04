@@ -1271,24 +1271,9 @@
 			pointer-events: auto;
 		}
 
+		/* Status text is still updated by updateStatus(), but the pill is not shown. */
 		#status {
-			position: fixed;
-			top: 20px;
-			right: 20px;
-			padding: 8px 16px;
-			background: rgba(30, 30, 40, 0.9);
-			color: #fff;
-			border-radius: 8px;
-			font-size: 14px;
-			z-index: 1000;
-		}
-
-		#status.connected {
-			background: rgba(16, 185, 129, 0.9);
-		}
-
-		#status.error {
-			background: rgba(239, 68, 68, 0.9);
+			display: none !important;
 		}
 	
 		/* Share / rename modals reuse export-modal chrome */
@@ -1691,7 +1676,7 @@
 
 	<!-- DOM Overlay elements for VR -->
 	<div id="overlay-root">
-		<div id="status">Ready</div>
+		<div id="status" hidden></div>
 		<button id="ui-toggle">Hide UI</button>
 
 		<!-- Scene file input (hidden). Note: "*" is not a valid accept value and
