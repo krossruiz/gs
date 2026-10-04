@@ -5823,7 +5823,7 @@ function updateUiToggleDOM() {
 //   • planar — left stick moves on the horizontal plane (in/out + strafe)
 //              relative to where you're looking; no vertical.
 //   • free   — left stick flies in the full look direction (incl. up/down).
-// Right stick left/right yaws around the view camera's local up (not world Y) in both movement modes, pivoting around your head.
+// Right stick left/right yaws around world up (0, 1, 0), not the camera's tilted local up, in both movement modes, orbiting the camera world position so the view origin stays put.
 const _locoQuat = new THREE.Quaternion();
 const _locoForward = new THREE.Vector3();
 const _locoRight = new THREE.Vector3();
@@ -5885,16 +5885,15 @@ function applyLocomotionInput(dt, refCamera, mx, my, rx, ry) {
 		player.position.add(_locoMove);
 	}
 
-	// Turn (right stick x / no keyboard equivalent). Yaw around the local up
-	// axis of the camera the user is looking through (not world Y), pivoting
-	// about that camera so the view doesn't swing. Desktop never sends rx.
+	// Turn (right stick x / no keyboard equivalent). Yaw around world up
+	// (0, 1, 0), not the camera's tilted local up, orbiting the camera world
+	// position so the view origin stays put and the rig turns around it.
+	// Desktop never sends rx.
 	if (rx !== 0) {
 		const angle = -rx * TURN_SPEED * dt;
-		camera.getWorldQuaternion(_locoQuat);
-		_locoUpLocal.set(0, 1, 0).applyQuaternion(_locoQuat).normalize();
 		camera.getWorldPosition(_locoHead);
-		player.position.sub(_locoHead).applyAxisAngle(_locoUpLocal, angle).add(_locoHead);
-		player.rotateOnWorldAxis(_locoUpLocal, angle);
+		player.position.sub(_locoHead).applyAxisAngle(_LOCO_UP, angle).add(_locoHead);
+		player.rotateOnWorldAxis(_LOCO_UP, angle);
 	}
 }
 
