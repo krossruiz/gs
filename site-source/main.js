@@ -3,6 +3,7 @@ import { XRButton } from './threejsAddons/XRButton.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { buildButtonLayout, drawButtonsToCanvas, hitTestButtons, mountButtonsToDOM } from './menuSystem.js';
+import { paintElementToCanvas } from './htmlInCanvas.js';
 
 // ============================================================================
 // Configuration
@@ -290,6 +291,14 @@ function getLayDownButton() {
 		variant: layDownView ? 'active' : 'default'
 	};
 }
+function getHtmlInCanvasButton() {
+	return {
+		id: 'htmlInCanvas',
+		label: htmlInCanvas ? 'HTML in canvas: ON' : 'HTML in canvas',
+		action: 'env:htmlInCanvas',
+		variant: htmlInCanvas ? 'active' : 'inactiveToggle'
+	};
+}
 const SCENES_BUTTONS = [
 	{ id: 'export', label: 'Export', action: 'scenes:export', variant: 'accent' },
 	{ id: 'importFile', label: 'Import File', action: 'scenes:importFile' },
@@ -352,6 +361,9 @@ function handleMenuAction(action) {
 			break;
 		case 'env:layDown':
 			toggleLayDownView();
+			break;
+		case 'env:htmlInCanvas':
+			setHtmlInCanvas(!htmlInCanvas);
 			break;
 		case 'env:nav:free':
 			locomotionMode = 'free';
@@ -645,6 +657,18 @@ let keyboardShift = false;    // uppercase next character key
 let keyboardSymbols = false;  // symbol layer toggled on
 let keyboardKeyRects = [];    // hit rectangles: { x, y, w, h, value, action }
 let keyboardCollapsed = false; // keyboard hidden to free up the view
+// When on during an immersive VR session, the world-space menu shows a live
+// snapshot of the desktop #desktop-chat element instead of the canvas-drawn
+// chat / scene / input panels. The side panel stays so this toggle (and Exit
+// VR) remain reachable. See htmlInCanvas.js for why this is not CSS3D.
+let htmlInCanvas = false;
+let htmlInCanvasPanel = null;
+let htmlInCanvasCanvas = null;
+let htmlInCanvasTexture = null;
+let htmlInCanvasAspect = 0;
+let htmlKeyboardForDom = false; // XR keyboard targets a focused field inside #desktop-chat
+let sidePanelHtmlButtonBoxes = [];
+let _htmlPaintAt = 0;
 let keyboardHoverIndex = -1;  // index into keyboardKeyRects the pointer is over
 let rayVisible = true;        // controller ray lines shown (cursor always shows)
 let hudStatusPanel = null;    // head-locked status badge (mirrors DOM #status)
@@ -1784,6 +1808,12 @@ function setCodeEditorText(text) {
 }
 
 function dispatchKey(key) {
+	const htmlField = htmlInCanvasTextField();
+	if (htmlField) {
+		dispatchKeyToDomField(htmlField, key);
+		tickHtmlInCanvas(true);
+		return;
+	}
 	const editCode = xrCodeEditingActive();
 	switch (key.action) {
 		case 'char': {
@@ -1835,8 +1865,13 @@ function setInputText(text) {
 // (see the render loop) so the pointer passes through to whatever is behind it.
 function toggleKeyboard() {
 	keyboardCollapsed = !keyboardCollapsed;
-	if (keyboardPanel) keyboardPanel.visible = !keyboardCollapsed;
-	if (keyboardCollapsed) setKeyboardHover(-1);
+	if (!keyboardCollapsed) htmlKeyboardForDom = true;
+	if (keyboardCollapsed) {
+		htmlKeyboardForDom = false;
+		setKeyboardHover(-1);
+	}
+	applyXrPanelVisibility(xrSessionActive());
+	layoutHtmlInCanvasPanel();
 	renderInputToCanvas(); // refresh the KEYS button state
 }
 
@@ -2238,8 +2273,16 @@ function renderSidePanel() {
 	sidePanelExitButtonBoxes = exitLayout.boxes;
 	drawButtonsToCanvas(ctx, sidePanelExitButtonBoxes, { fontSize: 13 });
 
+	// Live mirror of the desktop #desktop-chat element (off = canvas panels).
+	const htmlY = exitY + exitLayout.totalHeight + 6;
+	const htmlLayout = buildButtonLayout([getHtmlInCanvasButton()], {
+		width: w - 32, x: 16, y: htmlY, height: 36, perRow: 1, gap: 4
+	});
+	sidePanelHtmlButtonBoxes = htmlLayout.boxes;
+	drawButtonsToCanvas(ctx, sidePanelHtmlButtonBoxes, { fontSize: 12 });
+
 	// Navigation — same choices as desktop Environment → Navigation
-	const navY = exitY + exitLayout.totalHeight + 6;
+	const navY = htmlY + htmlLayout.totalHeight + 6;
 	ctx.font = '13px -apple-system, BlinkMacSystemFont, sans-serif';
 	ctx.fillStyle = 'rgba(255,255,255,0.4)';
 	ctx.textAlign = 'center';
@@ -2411,6 +2454,12 @@ function handleSidePanelHit(uv) {
 	const exitHit = hitTestButtons(sidePanelExitButtonBoxes, canvasX, canvasY);
 	if (exitHit) {
 		handleMenuAction(exitHit.action);
+		return;
+	}
+
+	const htmlHit = hitTestButtons(sidePanelHtmlButtonBoxes, canvasX, canvasY);
+	if (htmlHit) {
+		handleMenuAction(htmlHit.action);
 		return;
 	}
 
@@ -4544,6 +4593,86 @@ function handleChatPanelHit(uv) {
 	if (subHit) handleMenuAction(subHit.action);
 }
 
+function deepestDesktopChatElement(x, y) {
+	if (!desktopChat) return null;
+	let best = null;
+	let bestArea = Infinity;
+	const nodes = desktopChat.querySelectorAll('*');
+	for (const el of nodes) {
+		const style = getComputedStyle(el);
+		if (style.display === 'none' || style.visibility === 'hidden') continue;
+		const r = el.getBoundingClientRect();
+		if (r.width <= 0 || r.height <= 0) continue;
+		if (x < r.left || y < r.top || x > r.right || y > r.bottom) continue;
+		const area = r.width * r.height;
+		if (area <= bestArea) {
+			best = el;
+			bestArea = area;
+		}
+	}
+	return best;
+}
+
+function isHtmlTextField(el) {
+	if (!el) return false;
+	if (el instanceof HTMLTextAreaElement) return true;
+	if (el instanceof HTMLInputElement) {
+		const skip = ['button', 'submit', 'reset', 'checkbox', 'radio', 'range', 'file', 'color', 'image', 'hidden'];
+		return !skip.includes(el.type);
+	}
+	return false;
+}
+
+// Ray hit on the mirrored desktop menu: the mesh is a snapshot, so the click
+// is forwarded to the same #desktop-chat node that was painted.
+function forwardHtmlInCanvasClick(uv) {
+	if (!desktopChat) return;
+	const rect = desktopChat.getBoundingClientRect();
+	if (rect.width < 2 || rect.height < 2) return;
+	const x = rect.left + uv.x * rect.width;
+	const y = rect.top + (1 - uv.y) * rect.height;
+	const el = deepestDesktopChatElement(x, y);
+	if (!el) return;
+	// Minimizing would display:none the source and blank the mirror, with no
+	// in-world control to bring it back (the reopen button is outside the element).
+	if (el.closest('#desktop-chat-minimize')) return;
+
+	const label = el.closest('label');
+	let field = el.closest('input, textarea, select');
+	if (!field && label) field = label.control || label.querySelector('input, textarea, select');
+	if (field instanceof HTMLSelectElement && field.options.length > 0) {
+		field.selectedIndex = (field.selectedIndex + 1) % field.options.length;
+		field.dispatchEvent(new Event('change', { bubbles: true }));
+	} else if (field instanceof HTMLInputElement && field.type === 'range') {
+		const r = field.getBoundingClientRect();
+		const t = r.width > 0 ? Math.min(1, Math.max(0, (x - r.left) / r.width)) : 0;
+		const min = Number(field.min || 0);
+		const max = Number(field.max || 100);
+		field.value = String(min + t * (max - min));
+		field.dispatchEvent(new Event('input', { bubbles: true }));
+	} else if (field instanceof HTMLInputElement && (field.type === 'checkbox' || field.type === 'radio')) {
+		if (field.type === 'radio') field.checked = true;
+		else field.checked = !field.checked;
+		field.dispatchEvent(new Event('input', { bubbles: true }));
+		field.dispatchEvent(new Event('change', { bubbles: true }));
+	} else if (isHtmlTextField(field)) {
+		htmlKeyboardForDom = true;
+		keyboardCollapsed = false;
+		try { field.focus({ preventScroll: true }); } catch { field.focus(); }
+		applyXrPanelVisibility(xrSessionActive());
+		layoutHtmlInCanvasPanel();
+	} else {
+		const actionEl = el.closest('button, a, label, [data-action], [role="button"]') || el;
+		if (!isHtmlTextField(document.activeElement) || !desktopChat.contains(document.activeElement)) {
+			htmlKeyboardForDom = false;
+		}
+		actionEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+		applyXrPanelVisibility(xrSessionActive());
+		layoutHtmlInCanvasPanel();
+	}
+	tickHtmlInCanvas(true);
+}
+
 // ============================================================================
 // XR Controller Input & Raycasting
 // ============================================================================
@@ -4603,6 +4732,7 @@ function setupXRControllers() {
 	for (let i = 0; i < 2; i++) {
 		const controller = renderer.xr.getController(i);
 		controller.addEventListener('selectstart', onXRSelectStart);
+		controller.addEventListener('selectend', onXRSelectEnd);
 
 		// Attach ray line to controller
 		const ray = createControllerRay();
@@ -4616,6 +4746,102 @@ function setupXRControllers() {
 		// remaps hands with the headset; player still owns locomotion yaw/move.
 		viewOffset.add(controller);
 	}
+}
+
+const htmlScrollDrag = [null, null];
+const HTML_SCROLL_DRAG_PX = 8;
+
+function xrControllerIndex(controller) {
+	for (let i = 0; i < 2; i++) {
+		if (renderer.xr.getController(i) === controller) return i;
+	}
+	return -1;
+}
+
+function desktopChatPointFromUV(uv) {
+	if (!desktopChat || !uv) return null;
+	const rect = desktopChat.getBoundingClientRect();
+	if (rect.width < 2 || rect.height < 2) return null;
+	return {
+		x: rect.left + uv.x * rect.width,
+		y: rect.top + (1 - uv.y) * rect.height,
+		localX: uv.x * rect.width,
+		localY: (1 - uv.y) * rect.height
+	};
+}
+
+// Nearest ancestor (including the hit node) that can actually scroll.
+function scrollableDesktopAncestor(el) {
+	let node = el;
+	while (node && desktopChat && desktopChat.contains(node)) {
+		if (node instanceof Element) {
+			const style = getComputedStyle(node);
+			const oy = style.overflowY;
+			const ox = style.overflowX;
+			const canY = (oy === 'auto' || oy === 'scroll' || oy === 'overlay') && node.scrollHeight > node.clientHeight + 1;
+			const canX = (ox === 'auto' || ox === 'scroll' || ox === 'overlay') && node.scrollWidth > node.clientWidth + 1;
+			if (canY || canX) return { el: node, canX, canY };
+		}
+		if (node === desktopChat) break;
+		node = node.parentElement;
+	}
+	return null;
+}
+
+// Trigger press on a scrollable part of the mirrored menu. Returns false when
+// the point is not a scroller, so the caller clicks immediately instead.
+function beginHtmlInCanvasScrollDrag(controllerIndex, uv) {
+	const point = desktopChatPointFromUV(uv);
+	if (!point) return false;
+	const el = deepestDesktopChatElement(point.x, point.y);
+	if (!el || el.closest('#desktop-chat-minimize')) return false;
+	const scroll = scrollableDesktopAncestor(el);
+	if (!scroll) return false;
+	htmlScrollDrag[controllerIndex] = {
+		uv: { x: uv.x, y: uv.y },
+		scroller: scroll.el,
+		canX: scroll.canX,
+		canY: scroll.canY,
+		startLocalX: point.localX,
+		startLocalY: point.localY,
+		originScrollLeft: scroll.el.scrollLeft,
+		originScrollTop: scroll.el.scrollTop,
+		moved: false
+	};
+	return true;
+}
+
+function moveHtmlInCanvasScrollDrag(controllerIndex, uv) {
+	const drag = htmlScrollDrag[controllerIndex];
+	if (!drag || !drag.scroller || !drag.scroller.isConnected) {
+		htmlScrollDrag[controllerIndex] = null;
+		return;
+	}
+	const point = desktopChatPointFromUV(uv);
+	if (!point) return;
+	const dx = point.localX - drag.startLocalX;
+	const dy = point.localY - drag.startLocalY;
+	if (!drag.moved && (Math.abs(dx) > HTML_SCROLL_DRAG_PX || Math.abs(dy) > HTML_SCROLL_DRAG_PX)) {
+		drag.moved = true;
+	}
+	if (!drag.moved) return;
+	// Grab the content: pointer motion moves the scrolled content with it.
+	if (drag.canY) drag.scroller.scrollTop = drag.originScrollTop - dy;
+	if (drag.canX) drag.scroller.scrollLeft = drag.originScrollLeft - dx;
+	tickHtmlInCanvas(true);
+}
+
+function endHtmlInCanvasScrollDrag(controllerIndex) {
+	const drag = htmlScrollDrag[controllerIndex];
+	if (!drag) return;
+	htmlScrollDrag[controllerIndex] = null;
+	if (!drag.moved) forwardHtmlInCanvasClick(drag.uv);
+	else tickHtmlInCanvas(true);
+}
+
+function onXRSelectEnd(event) {
+	const idx = xrControllerIndex(event.target);
+	if (idx >= 0) endHtmlInCanvasScrollDrag(idx);
 }
 
 function onXRSelectStart(event) {
@@ -4637,7 +4863,20 @@ function onXRSelectStart(event) {
 	if (uiCollapsed) return;
 
 	// Chat center panel (Scene|Theme subtabs)
-	if (chatPanel) {
+	if (htmlInCanvasPanel && htmlInCanvasPanel.visible) {
+		const htmlHits = raycaster.intersectObject(htmlInCanvasPanel);
+		if (htmlHits.length > 0 && htmlHits[0].uv) {
+			// Scrollable regions drag with the trigger held. A press that doesn't
+			// move still clicks through forwardHtmlInCanvasClick on selectend.
+			// Anything else (buttons, fields, scroll controls) clicks immediately.
+			const idx = xrControllerIndex(controller);
+			if (idx >= 0 && beginHtmlInCanvasScrollDrag(idx, htmlHits[0].uv)) return;
+			forwardHtmlInCanvasClick(htmlHits[0].uv);
+			return;
+		}
+	}
+
+	if (chatPanel && chatPanel.visible) {
 		const chatHits = raycaster.intersectObject(chatPanel);
 		if (chatHits.length > 0 && chatHits[0].uv) {
 			handleChatPanelHit(chatHits[0].uv);
@@ -4646,7 +4885,7 @@ function onXRSelectStart(event) {
 	}
 
 	// Check scene manager panel hit
-	if (scenePanel) {
+	if (scenePanel && scenePanel.visible) {
 		const sceneHits = raycaster.intersectObject(scenePanel);
 		if (sceneHits.length > 0 && sceneHits[0].uv) {
 			handleScenePanelHit(sceneHits[0].uv);
@@ -4655,7 +4894,7 @@ function onXRSelectStart(event) {
 	}
 
 	// Check side panel hit first (toggle + color wheel)
-	if (sidePanel) {
+	if (sidePanel && sidePanel.visible) {
 		const sideHits = raycaster.intersectObject(sidePanel);
 		if (sideHits.length > 0 && sideHits[0].uv) {
 			handleSidePanelHit(sideHits[0].uv);
@@ -4664,7 +4903,7 @@ function onXRSelectStart(event) {
 	}
 
 	// Check input panel hit: [input area][MIC][KEYS][Send]
-	if (inputPanel) {
+	if (inputPanel && inputPanel.visible) {
 		const intersects = raycaster.intersectObject(inputPanel);
 		if (intersects.length > 0 && intersects[0].uv) {
 			const L = inputPanelLayout();
@@ -4683,7 +4922,7 @@ function onXRSelectStart(event) {
 	}
 
 	// Check virtual keyboard hit (only when it's showing)
-	if (keyboardPanel && !keyboardCollapsed) {
+	if (keyboardPanel && keyboardPanel.visible && !keyboardCollapsed) {
 		const kbHits = raycaster.intersectObject(keyboardPanel);
 		if (kbHits.length > 0 && kbHits[0].uv) {
 			handleKeyboardHit(kbHits[0].uv);
@@ -5556,17 +5795,8 @@ function setUiCollapsed(collapsed) {
 	if (displayOnlyMode) collapsed = true;
 	uiCollapsed = collapsed;
 	const immersive = renderer.xr.isPresenting;
-	const show = !collapsed;
 	if (immersive) {
-		if (chatPanel) chatPanel.visible = show;
-		if (inputPanel) inputPanel.visible = show;
-		if (sidePanel) sidePanel.visible = show;
-		if (scenePanel) scenePanel.visible = show;
-		// The keyboard also respects its own collapsed state when the UI is shown.
-		if (keyboardPanel) keyboardPanel.visible = show && !keyboardCollapsed;
-
-		const chatOverlay = document.getElementById('chat-overlay');
-		if (chatOverlay) chatOverlay.style.display = show ? '' : 'none';
+		applyXrPanelVisibility(true);
 	} else {
 		setDesktopChatMinimized(collapsed);
 	}
@@ -5589,11 +5819,11 @@ function updateUiToggleDOM() {
 // Locomotion (left thumbstick = move, right thumbstick = turn)
 // ============================================================================
 // Modes cycle Off → Planar → Free-roam:
-//   • off    — thumbsticks scroll the chat / scene list (original behavior).
+//   • off    — thumbsticks scroll the canvas chat / scene list (not the HTML-in-canvas mirror).
 //   • planar — left stick moves on the horizontal plane (in/out + strafe)
 //              relative to where you're looking; no vertical.
 //   • free   — left stick flies in the full look direction (incl. up/down).
-// Right stick turns (yaw) in both movement modes, pivoting around your head.
+// Right stick left/right yaws around the view camera's local up (not world Y) in both movement modes, pivoting around your head.
 const _locoQuat = new THREE.Quaternion();
 const _locoForward = new THREE.Vector3();
 const _locoRight = new THREE.Vector3();
@@ -5655,13 +5885,16 @@ function applyLocomotionInput(dt, refCamera, mx, my, rx, ry) {
 		player.position.add(_locoMove);
 	}
 
-	// Turn (right stick x / no keyboard equivalent), yaw around the user's
-	// head so the view doesn't swing.
+	// Turn (right stick x / no keyboard equivalent). Yaw around the local up
+	// axis of the camera the user is looking through (not world Y), pivoting
+	// about that camera so the view doesn't swing. Desktop never sends rx.
 	if (rx !== 0) {
 		const angle = -rx * TURN_SPEED * dt;
-		refCamera.getWorldPosition(_locoHead);
-		player.position.sub(_locoHead).applyAxisAngle(_LOCO_UP, angle).add(_locoHead);
-		player.rotateY(angle);
+		camera.getWorldQuaternion(_locoQuat);
+		_locoUpLocal.set(0, 1, 0).applyQuaternion(_locoQuat).normalize();
+		camera.getWorldPosition(_locoHead);
+		player.position.sub(_locoHead).applyAxisAngle(_locoUpLocal, angle).add(_locoHead);
+		player.rotateOnWorldAxis(_locoUpLocal, angle);
 	}
 }
 
@@ -5932,6 +6165,8 @@ function setDesktopChatMinimized(minimized) {
 
 function saveDesktopChatSize() {
 	if (desktopChat.classList.contains('expanded')) return;
+	// Off-screen while mirrored into VR; don't persist the parked rect.
+	if (desktopChat.classList.contains('html-in-canvas-source')) return;
 	try {
 		const rect = desktopChat.getBoundingClientRect();
 		localStorage.setItem(CHAT_SIZE_KEY, JSON.stringify({
@@ -6463,22 +6698,51 @@ if (dchatThemesButtonsMount) {
 // Switches between the desktop chat window (windowed browser) and the slim
 // dom-overlay bar (VR immersive session), and shows/hides the legacy 3D
 // canvas panels accordingly — the desktop window replaces them entirely.
+function xrSessionActive() {
+	return !!(renderer && renderer.xr && renderer.xr.isPresenting);
+}
+
+// One place for XR panel visibility so the HTML-in-canvas toggle and Hide UI
+// cannot disagree. Desktop (not presenting) is unchanged: canvas panels stay
+// hidden and #desktop-chat stays the on-screen menu.
+function applyXrPanelVisibility(immersive = xrSessionActive()) {
+	const show = immersive && !uiCollapsed && !displayOnlyMode;
+	const html = show && htmlInCanvas;
+	if (chatPanel) chatPanel.visible = show && !html;
+	if (inputPanel) inputPanel.visible = show && !html;
+	if (scenePanel) scenePanel.visible = show && !html;
+	// Side panel is the VR menu that hosts the HTML-in-canvas toggle.
+	if (sidePanel) sidePanel.visible = show;
+	if (keyboardPanel) {
+		const kb = show && !keyboardCollapsed && (!html || htmlKeyboardForDom);
+		keyboardPanel.visible = kb;
+	}
+	if (htmlInCanvasPanel) htmlInCanvasPanel.visible = html;
+
+	if (desktopChat) {
+		desktopChat.classList.toggle('html-in-canvas-source', html);
+		const hideDom = displayOnlyMode || (immersive ? !html : uiCollapsed);
+		desktopChat.classList.toggle('hidden', hideDom);
+	}
+	if (desktopChatReopenBtn) {
+		desktopChatReopenBtn.classList.toggle('visible', !immersive && uiCollapsed && !displayOnlyMode);
+	}
+	if (chatOverlayBar) {
+		chatOverlayBar.style.display = '';
+		// Slim dom-overlay bar is the fallback text field. Hide it while the
+		// full desktop element is mirrored in-world so it doesn't cover the view.
+		chatOverlayBar.classList.toggle('visible', immersive && !displayOnlyMode && !uiCollapsed && !html);
+	}
+}
+
 function setImmersiveUiMode(immersive) {
-	const panels = [chatPanel, inputPanel, sidePanel, scenePanel];
-	for (const p of panels) if (p) p.visible = immersive && !displayOnlyMode;
-	if (keyboardPanel) keyboardPanel.visible = immersive && !keyboardCollapsed && !displayOnlyMode;
 	// The head-locked hud (Hide/Show-UI panel) only makes sense with a headset;
 	// the desktop equivalent is the #ui-toggle button. The status badge is not shown.
 	hud.visible = immersive && !displayOnlyMode;
 	// Mouse orbit/pan/zoom only makes sense windowed — the headset pose drives
 	// the camera during an XR session.
 	orbitControls.enabled = !immersive;
-
-	desktopChat.classList.toggle('hidden', immersive || uiCollapsed || displayOnlyMode);
-	if (desktopChatReopenBtn) {
-		desktopChatReopenBtn.classList.toggle('visible', !immersive && uiCollapsed && !displayOnlyMode);
-	}
-	if (chatOverlayBar) chatOverlayBar.classList.toggle('visible', immersive && !displayOnlyMode);
+	applyXrPanelVisibility(immersive);
 }
 
 // ============================================================================
@@ -6505,6 +6769,7 @@ function positionAllPanels(chatY) {
 	if (keyboardPanel) keyboardPanel.position.set(0, kbY, -CHAT_PANEL_DISTANCE);
 	if (sidePanel) sidePanel.position.set(sideX, chatY, -CHAT_PANEL_DISTANCE);
 	if (scenePanel) scenePanel.position.set(sceneX, chatY, -CHAT_PANEL_DISTANCE);
+	if (htmlInCanvas) layoutHtmlInCanvasPanel(chatY);
 }
 
 renderer.xr.addEventListener('sessionstart', () => {
@@ -6532,6 +6797,150 @@ renderer.xr.addEventListener('sessionend', () => {
 });
 
 // ============================================================================
+// HTML in canvas — live #desktop-chat mirrored onto a VR menu mesh
+// ============================================================================
+function createHtmlInCanvasPanel() {
+	htmlInCanvasCanvas = document.createElement('canvas');
+	htmlInCanvasCanvas.width = 4;
+	htmlInCanvasCanvas.height = 4;
+	htmlInCanvasTexture = new THREE.CanvasTexture(htmlInCanvasCanvas);
+	htmlInCanvasTexture.minFilter = THREE.LinearFilter;
+	htmlInCanvasTexture.magFilter = THREE.LinearFilter;
+	const geometry = new THREE.PlaneGeometry(CHAT_PANEL_WIDTH, CHAT_PANEL_HEIGHT);
+	const material = new THREE.MeshBasicMaterial({
+		map: htmlInCanvasTexture,
+		transparent: true,
+		side: THREE.DoubleSide
+	});
+	htmlInCanvasPanel = new THREE.Mesh(geometry, material);
+	htmlInCanvasPanel.name = 'htmlInCanvasPanel';
+	htmlInCanvasPanel.visible = false;
+	htmlInCanvasPanel.position.set(0, 1.4, -CHAT_PANEL_DISTANCE);
+	scene.add(htmlInCanvasPanel);
+}
+
+function layoutHtmlInCanvasPanel(chatY = 1.4) {
+	if (!htmlInCanvasPanel) return;
+	const aspect = htmlInCanvasAspect > 0.05 ? htmlInCanvasAspect : 1.35;
+	let width = 1.15;
+	let height = width * aspect;
+	const maxH = 1.25;
+	if (height > maxH) {
+		height = maxH;
+		width = height / aspect;
+	}
+	const params = htmlInCanvasPanel.geometry && htmlInCanvasPanel.geometry.parameters;
+	if (!params || Math.abs(params.width - width) > 0.001 || Math.abs(params.height - height) > 0.001) {
+		htmlInCanvasPanel.geometry.dispose();
+		htmlInCanvasPanel.geometry = new THREE.PlaneGeometry(width, height);
+	}
+	htmlInCanvasPanel.position.set(0, chatY, -CHAT_PANEL_DISTANCE);
+	// Keep the Environment side panel (the toggle) just to the right of the mirror.
+	if (htmlInCanvas && sidePanel) {
+		const sideX = width / 2 + SIDE_PANEL_GAP + SIDE_PANEL_WIDTH / 2;
+		sidePanel.position.set(sideX, chatY, -CHAT_PANEL_DISTANCE);
+	}
+	if (htmlInCanvas && keyboardPanel && keyboardPanel.visible) {
+		const kbY = chatY - height / 2 - KEYBOARD_PANEL_GAP - KEYBOARD_PANEL_HEIGHT / 2;
+		keyboardPanel.position.set(0, kbY, -CHAT_PANEL_DISTANCE);
+	}
+}
+
+function tickHtmlInCanvas(force) {
+	if (!htmlInCanvasPanel || !htmlInCanvasPanel.visible || !desktopChat || !htmlInCanvasCanvas) return;
+	const now = performance.now();
+	if (!force && now - _htmlPaintAt < 200) return;
+	_htmlPaintAt = now;
+	try {
+		const metrics = paintElementToCanvas(desktopChat, htmlInCanvasCanvas);
+		if (htmlInCanvasTexture) htmlInCanvasTexture.needsUpdate = true;
+		if (metrics && metrics.width > 0) {
+			const aspect = metrics.height / metrics.width;
+			if (Math.abs(aspect - htmlInCanvasAspect) > 0.02) {
+				htmlInCanvasAspect = aspect;
+				layoutHtmlInCanvasPanel();
+			}
+		}
+	} catch (err) {
+		console.warn('HTML in canvas paint failed:', err);
+	}
+}
+
+function setHtmlInCanvas(on) {
+	htmlInCanvas = !!on;
+	if (!htmlInCanvas) htmlKeyboardForDom = false;
+	applyXrPanelVisibility(xrSessionActive());
+	if (htmlInCanvas) {
+		htmlInCanvasAspect = 0;
+		tickHtmlInCanvas(true);
+		layoutHtmlInCanvasPanel();
+	} else {
+		positionAllPanels(1.4);
+	}
+	renderSidePanel();
+	updateStatus(htmlInCanvas ? 'HTML in canvas: showing desktop menu' : 'XR canvas panels', '');
+}
+
+function htmlInCanvasTextField() {
+	if (!htmlInCanvas || !htmlKeyboardForDom || !desktopChat) return null;
+	const el = document.activeElement;
+	if (!isHtmlTextField(el) || !desktopChat.contains(el)) return null;
+	return el;
+}
+
+function dispatchKeyToDomField(el, key) {
+	const write = (text) => {
+		const start = el.selectionStart == null ? el.value.length : el.selectionStart;
+		const end = el.selectionEnd == null ? el.value.length : el.selectionEnd;
+		el.value = el.value.slice(0, start) + text + el.value.slice(end);
+		const pos = start + text.length;
+		try { el.setSelectionRange(pos, pos); } catch { /* type=number etc. */ }
+		el.dispatchEvent(new Event('input', { bubbles: true }));
+	};
+	switch (key.action) {
+		case 'char': {
+			let c = key.value;
+			if (keyboardShift && /^[a-z]$/.test(c)) c = c.toUpperCase();
+			write(c);
+			if (keyboardShift) {
+				keyboardShift = false;
+				renderKeyboardToCanvas();
+			}
+			break;
+		}
+		case 'space':
+			write(' ');
+			break;
+		case 'backspace': {
+			const start = el.selectionStart == null ? el.value.length : el.selectionStart;
+			const end = el.selectionEnd == null ? el.value.length : el.selectionEnd;
+			if (start === end && start > 0) {
+				el.value = el.value.slice(0, start - 1) + el.value.slice(end);
+				try { el.setSelectionRange(start - 1, start - 1); } catch { /* ignore */ }
+			} else {
+				el.value = el.value.slice(0, start) + el.value.slice(end);
+				try { el.setSelectionRange(start, start); } catch { /* ignore */ }
+			}
+			el.dispatchEvent(new Event('input', { bubbles: true }));
+			break;
+		}
+		case 'shift':
+			keyboardShift = !keyboardShift;
+			renderKeyboardToCanvas();
+			break;
+		case 'symbols':
+			keyboardSymbols = !keyboardSymbols;
+			keyboardShift = false;
+			renderKeyboardToCanvas();
+			break;
+		case 'enter':
+			if (el instanceof HTMLTextAreaElement) write('\n');
+			else el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+			break;
+	}
+}
+
+// ============================================================================
 // Initialize and Animation Loop
 // ============================================================================
 createChatPanel();
@@ -6539,6 +6948,7 @@ createInputPanel();
 createKeyboardPanel();
 createSidePanel();
 createScenePanel();
+createHtmlInCanvasPanel();
 createHudStatus();
 createUiToggle();
 // Start in windowed (non-XR) mode: the desktop chat window is the UI, and the
@@ -6585,6 +6995,7 @@ registerMenuRoot(inputPanel);
 registerMenuRoot(keyboardPanel);
 registerMenuRoot(sidePanel);
 registerMenuRoot(scenePanel);
+registerMenuRoot(htmlInCanvasPanel);
 registerMenuRoot(hud);
 applyMenuLayerPriority();
 // Previous per-hand button-pressed state, for edge detection (ray toggle) and
@@ -6614,16 +7025,19 @@ renderer.setAnimationLoop((time) => {
 		if (keyboardPanel) keyboardPanel.lookAt(cameraWorldPos);
 		if (sidePanel) sidePanel.lookAt(cameraWorldPos);
 		if (scenePanel) scenePanel.lookAt(cameraWorldPos);
+		if (htmlInCanvasPanel && htmlInCanvasPanel.visible) htmlInCanvasPanel.lookAt(cameraWorldPos);
+		tickHtmlInCanvas(false);
 
 		// Build hit-target list (panels that exist and are showing)
 		_hitTargets.length = 0;
 		if (uiTogglePanel && !displayOnlyMode) _hitTargets.push(uiTogglePanel); // always reachable (unless display-only share)
 		if (!uiCollapsed && !displayOnlyMode) {
-			if (scenePanel) _hitTargets.push(scenePanel);
-			if (sidePanel) _hitTargets.push(sidePanel);
-			if (inputPanel) _hitTargets.push(inputPanel);
-			if (keyboardPanel && !keyboardCollapsed) _hitTargets.push(keyboardPanel);
-			if (chatPanel) _hitTargets.push(chatPanel);
+			if (htmlInCanvasPanel && htmlInCanvasPanel.visible) _hitTargets.push(htmlInCanvasPanel);
+			if (scenePanel && scenePanel.visible) _hitTargets.push(scenePanel);
+			if (sidePanel && sidePanel.visible) _hitTargets.push(sidePanel);
+			if (inputPanel && inputPanel.visible) _hitTargets.push(inputPanel);
+			if (keyboardPanel && keyboardPanel.visible) _hitTargets.push(keyboardPanel);
+			if (chatPanel && chatPanel.visible) _hitTargets.push(chatPanel);
 		}
 
 		// Update reticles per controller; track keyboard hover across both hands.
@@ -6661,6 +7075,8 @@ renderer.setAnimationLoop((time) => {
 				} else if (hit.object === keyboardPanel) {
 					reticle.material.color.setHex(0x6366f1); // indigo
 					if (hit.uv) frameKbHover = keyIndexAtUV(hit.uv);
+				} else if (hit.object === htmlInCanvasPanel) {
+					reticle.material.color.setHex(0x6366f1);
 				} else if (hit.object === inputPanel && hit.uv) {
 					const L = inputPanelLayout();
 					const cx = hit.uv.x * L.W;
@@ -6672,6 +7088,10 @@ renderer.setAnimationLoop((time) => {
 				}
 			} else {
 				reticle.visible = false;
+			}
+			if (htmlScrollDrag[i]) {
+				const htmlHit = intersects.find((h) => h.object === htmlInCanvasPanel && h.uv);
+				if (htmlHit) moveHtmlInCanvasScrollDrag(i, htmlHit.uv);
 			}
 		}
 		// Apply keyboard hover (re-renders only when the hovered key changes)
@@ -6716,10 +7136,15 @@ renderer.setAnimationLoop((time) => {
 					const thumbY = axes.length >= 4 ? axes[3] : (axes.length >= 2 ? axes[1] : 0);
 
 					if (hand === 'right' && Math.abs(thumbY) > THUMBSTICK_DEADZONE) {
-						// Right thumbstick: scroll chat
-						chatScrollOffset += thumbY < 0 ? SCROLL_SPEED : -SCROLL_SPEED;
-						chatScrollOffset = Math.max(0, chatScrollOffset);
-						renderChatToCanvas();
+						// The HTML-in-canvas mirror is not stick-scrolled. Right stick
+						// stays free for yaw. Scroll that menu by pointing at it and
+						// pulling the trigger (see beginHtmlInCanvasScrollDrag).
+						if (!(htmlInCanvas && htmlInCanvasPanel && htmlInCanvasPanel.visible)) {
+							// Right thumbstick: scroll the canvas chat panel
+							chatScrollOffset += thumbY < 0 ? SCROLL_SPEED : -SCROLL_SPEED;
+							chatScrollOffset = Math.max(0, chatScrollOffset);
+							renderChatToCanvas();
+						}
 					}
 					if (hand === 'left' && Math.abs(thumbY) > THUMBSTICK_DEADZONE) {
 						// Left thumbstick: scroll active left-panel list
