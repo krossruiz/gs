@@ -5821,8 +5821,9 @@ function updateUiToggleDOM() {
 // Modes cycle Off → Planar → Free-roam:
 //   • off    — thumbsticks scroll the canvas chat / scene list (not the HTML-in-canvas mirror).
 //   • planar — left stick moves on the horizontal plane (in/out + strafe)
-//              relative to where you're looking; no vertical.
-//   • free   — left stick flies in the full look direction (incl. up/down).
+//              relative to camera yaw; no vertical from the left stick.
+//   • free   — left stick uses the same level yaw translation; vertical
+//              (right stick / Q/E) follows the camera's tilted local up.
 // Right stick left/right yaws around world up (0, 1, 0), not the camera's tilted local up, in both movement modes, orbiting the camera world position so the view origin stays put.
 const _locoQuat = new THREE.Quaternion();
 const _locoForward = new THREE.Vector3();
@@ -5855,24 +5856,36 @@ const _locoUpLocal = new THREE.Vector3();
 // refCamera supplies the facing direction (xrCam in VR, the plain desktop
 // `camera` otherwise).
 //
-// 'planar' (First Person nav type): forward/strafe are flattened onto the
-// horizontal plane (no drift from looking up/down), and vertical (Q/E)
-// always moves along the world/global up axis regardless of where you're
-// looking - height is controlled by Q/E alone.
-// 'free' (WASD nav type): forward/strafe follow the exact look direction
-// (can fly up/down by looking up/down), and vertical (Q/E) moves along the
-// camera's own local up vector, which tilts with your view.
+// Both nav types: forward/back is the camera look direction with pitch
+// removed (projected onto world XZ, so yaw around world up, level with the
+// ground). Strafe is perpendicular to that level forward, also on XZ.
+// Looking up or down does not fly you along the view ray.
+// 'planar' (First Person): vertical (Q/E, right stick) is world up.
+// 'free' (WASD): vertical is the camera's own local up, which tilts with pitch.
 function applyLocomotionInput(dt, refCamera, mx, my, rx, ry) {
 	if (!player || locomotionMode === 'off' || dt <= 0) return;
 
 	if (mx !== 0 || my !== 0 || ry !== 0) {
 		refCamera.getWorldQuaternion(_locoQuat);
+		// View forward (camera local -Z), then pitch 0: keep only the XZ
+		// projection so translation follows yaw, not look up/down.
 		_locoForward.set(0, 0, -1).applyQuaternion(_locoQuat);
-		_locoRight.set(1, 0, 0).applyQuaternion(_locoQuat);
+		const lookY = _locoForward.y;
+		_locoForward.y = 0;
+		if (_locoForward.lengthSq() < 1e-8) {
+			// Look is parallel to world up, so the XZ projection vanished.
+			// Camera up still carries yaw: it points opposite the heading
+			// when looking up, and along the heading when looking down.
+			_locoForward.set(0, 1, 0).applyQuaternion(_locoQuat);
+			_locoForward.y = 0;
+			if (lookY > 0) _locoForward.negate();
+		}
+		if (_locoForward.lengthSq() < 1e-8) _locoForward.set(0, 0, -1);
+		_locoForward.normalize();
+		// Level strafe: right = forward × worldUp (Y-up, camera looks down -Z).
+		_locoRight.crossVectors(_locoForward, _LOCO_UP).normalize();
 		let upVec;
 		if (locomotionMode === 'planar') {
-			_locoForward.y = 0; _locoRight.y = 0;
-			_locoForward.normalize(); _locoRight.normalize();
 			upVec = _LOCO_UP; // global up - height is set by Q/E, unaffected by view direction
 		} else {
 			upVec = _locoUpLocal.set(0, 1, 0).applyQuaternion(_locoQuat); // local up - tilts with your view
