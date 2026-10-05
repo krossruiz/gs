@@ -796,24 +796,79 @@
 		}
 
 
-		/* #dchat-scenes-buttons and #dchat-community-buttons are populated at
-		   runtime by menuSystem.js - see SCENES_BUTTONS/COMMUNITY_BUTTONS in
-		   main.js. flex-shrink:0 keeps them from being squashed by the
-		   scrollable list below them. */
+		/* #dchat-scenes-buttons still SVG via menuSystem; Community desktop
+		   header uses HTML .dchat-btn rows (see renderCommunityDesktopButtons)
+		   so wide panels / high DPI cannot scale an SVG and crush the list. */
 		#dchat-scenes-buttons, #dchat-community-buttons { flex-shrink: 0; }
-		/* SVG menu chips (env/scene/theme toggles, community Clear/Layer, etc.)
-		   ship a translucent fill from VARIANT_COLORS. Inside this window only,
-		   those rgba fills become an opaque chip. Gradient fills stay solid. */
+		/* SVG menu chips (env/scene/theme toggles, etc.) ship a translucent
+		   fill from VARIANT_COLORS. Inside this window only, those rgba fills
+		   become an opaque chip. Gradient fills stay solid. */
 		#desktop-chat .menu-btn rect[fill^="rgba"] { fill: #3a3c4e; }
-		#dchat-community-loadmode { flex-shrink: 0; margin-top: 8px; }
+		/* If any SVG remains in these mounts, cap height so meet-scaling cannot
+		   steal the list viewport (defense in depth). */
+		#dchat-community-buttons svg {
+			display: block;
+			width: 100%;
+			height: 44px;
+			max-height: 44px;
+		}
+		#dchat-community-loadmode svg {
+			display: block;
+			width: 100%;
+			height: 36px;
+			max-height: 36px;
+		}
+		#dchat-community-buttons,
+		#dchat-community-loadmode {
+			flex: 0 0 auto;
+			flex-shrink: 0;
+			display: flex;
+			flex-direction: row;
+			flex-wrap: wrap;
+			gap: 8px;
+			align-items: center;
+			height: auto;
+			max-height: 84px; /* at most two 36px rows + gap */
+		}
+		#dchat-community-loadmode { margin-top: 8px; }
+		#dchat-community-buttons .dchat-btn,
+		#dchat-community-loadmode .dchat-btn {
+			flex: 1 1 calc(50% - 4px);
+			min-width: 0;
+			box-sizing: border-box;
+			height: 36px;
+			min-height: 36px;
+			max-height: 36px;
+			padding: 0 10px;
+			font-size: 12px;
+			line-height: 36px;
+			text-align: center;
+		}
 		.dchat-community-loadhint {
 			margin: 6px 2px 0;
 			font-size: 11px;
 			line-height: 1.35;
 			color: var(--dchat-text-muted, rgba(255,255,255,0.45));
+			flex-shrink: 0;
 		}
 
-		#dchat-community-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; min-height: 0; margin-top: 10px; }
+		#dchat-community {
+			overflow-y: auto;
+		}
+		#dchat-community-section-scenes > #dchat-community-buttons,
+		#dchat-community-section-scenes > #dchat-community-loadmode,
+		#dchat-community-section-scenes > .dchat-community-loadhint {
+			flex: 0 0 auto;
+		}
+		#dchat-community-list {
+			flex: 1 1 auto;
+			min-height: 120px;
+			overflow-y: auto;
+			display: flex;
+			flex-direction: column;
+			gap: 6px;
+			margin-top: 10px;
+		}
 		#dchat-community-list::-webkit-scrollbar { width: 8px; }
 		#dchat-community-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
 

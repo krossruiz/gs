@@ -3316,14 +3316,33 @@ function communityLoadModeButtons() {
 	];
 }
 
+/** Desktop Community header controls as HTML buttons (not SVG).
+ *  SVG mounts use width:100% + meet and grow with panel width/DPI, which
+ *  can crush #dchat-community-list to ~0 height on wide desktops. XR still
+ *  draws COMMUNITY_BUTTONS via the canvas menuSystem path. */
+function mountHtmlActionButtons(container, specs, { accentVariants = ['accent', 'active'] } = {}) {
+	if (!container) return;
+	container.innerHTML = '';
+	for (const spec of specs) {
+		const btn = document.createElement('button');
+		btn.type = 'button';
+		btn.className = 'dchat-btn';
+		const v = spec.variant || '';
+		if (accentVariants.includes(v)) btn.classList.add('accent');
+		else if (v === 'secondary' || v === 'inactiveToggle') btn.classList.add('secondary');
+		btn.textContent = spec.label;
+		btn.dataset.action = spec.action;
+		btn.addEventListener('click', () => handleMenuAction(spec.action));
+		container.appendChild(btn);
+	}
+}
+
+function renderCommunityDesktopButtons() {
+	mountHtmlActionButtons(dchatCommunityButtonsMount, COMMUNITY_BUTTONS);
+}
+
 function renderCommunityLoadModeControls() {
-	if (!dchatCommunityLoadModeMount) return;
-	mountButtonsToDOM(
-		dchatCommunityLoadModeMount,
-		communityLoadModeButtons(),
-		{ width: 384, height: 36, gap: 8, perRow: 2, fontSize: 12 },
-		handleMenuAction
-	);
+	mountHtmlActionButtons(dchatCommunityLoadModeMount, communityLoadModeButtons());
 }
 
 function setCommunityLoadMode(mode) {
@@ -6997,7 +7016,7 @@ dchatResetCameraBtn.addEventListener('click', () => {
 // renderDomSceneList via the .visible class on its mount div).
 mountButtonsToDOM(dchatScenesButtonsMount, SCENES_BUTTONS, { width: 384, height: 44, gap: 8, minWidth: 100, fontSize: 12 }, handleMenuAction);
 mountButtonsToDOM(dchatExportCombinedMount, EXPORT_COMBINED_BUTTON, { width: 384, height: 44, gap: 8, perRow: 1, fontSize: 13 }, handleMenuAction);
-mountButtonsToDOM(dchatCommunityButtonsMount, COMMUNITY_BUTTONS, { width: 384, height: 44, gap: 8, perRow: 2, fontSize: 12 }, handleMenuAction);
+renderCommunityDesktopButtons();
 renderCommunityLoadModeControls();
 if (dchatThemesButtonsMount) {
 	mountButtonsToDOM(dchatThemesButtonsMount, THEME_BUTTONS, { width: 384, height: 44, gap: 8, perRow: 3, fontSize: 11 }, handleMenuAction);

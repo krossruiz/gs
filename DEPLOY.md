@@ -61,6 +61,24 @@ Replace `HOST` with `vrclaudeinterface.vercel.app` and `gs.krossruiz.workers.dev
 
 In the browser: canvas appears, Model dropdown populates, welcome message shows, bottom version control shows the number you set, version picker opens.
 
+## Version log (after each ship)
+
+Follow **`version-log/Version Log Updating Rules.md`** (exact verbatim chat only).
+
+1. Ensure `GS_VERSION` matches the shipped number (ask the user; never invent).
+2. Archive **exact** user messages and assistant SendToUser replies into `version-log/<version>/conversation.md` (or `thread-*.md`) using:
+
+   ```markdown
+   ### User
+   ...
+   ### Assistant
+   ...
+   ```
+
+3. Do **not** store paraphrased NOTES, topic lists, system prompts, tool dumps, or secrets.
+4. See also `version-log/README.md` if present.
+
+
 ## Checklist (agents)
 
 - [ ] Asked user for version; set `GS_VERSION` + `versions.json`
@@ -69,3 +87,4 @@ In the browser: canvas appears, Model dropdown populates, welcome message shows,
 - [ ] CF: full `public/` sync including **`vendor_modules/three/build/`**
 - [ ] CF: SCENES KV kept; secrets untouched
 - [ ] Both hosts: `three.module.js` 200; smoke-test canvas
+- [ ] Updated `version-log/<version>/` with exact conversation transcript (see Version Log Updating Rules.md)
