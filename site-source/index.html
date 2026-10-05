@@ -1281,7 +1281,7 @@
 		}
 	
 		/* Share / rename modals reuse export-modal chrome */
-		#share-modal, #rename-modal {
+		#share-modal, #rename-modal, #community-upload-modal, #prompts-modal {
 			display: none;
 			position: fixed;
 			inset: 0;
@@ -1291,8 +1291,59 @@
 			justify-content: center;
 			pointer-events: auto;
 		}
-		#share-modal.visible, #rename-modal.visible { display: flex; }
-		#share-modal-inner, #rename-modal-inner {
+		#share-modal.visible, #rename-modal.visible,
+		#community-upload-modal.visible, #prompts-modal.visible { display: flex; }
+		#prompts-modal-inner {
+			width: min(520px, calc(100vw - 24px));
+			max-height: min(80vh, 640px);
+			display: flex;
+			flex-direction: column;
+			background: rgba(22, 22, 32, 0.96);
+			border: 1px solid rgba(255,255,255,0.12);
+			border-radius: 14px;
+			padding: 16px;
+			color: #fff;
+			box-sizing: border-box;
+		}
+		#prompts-modal-inner h3 { margin: 0 0 8px; font-size: 16px; }
+		#prompts-modal-scroll {
+			flex: 1;
+			min-height: 0;
+			overflow: auto;
+			-webkit-overflow-scrolling: touch;
+			font-size: 13px;
+			line-height: 1.45;
+			padding: 8px 4px;
+			border-top: 1px solid rgba(255,255,255,0.08);
+			border-bottom: 1px solid rgba(255,255,255,0.08);
+			margin: 8px 0;
+		}
+		.prompts-turn { margin: 0 0 12px; padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.04); white-space: pre-wrap; word-break: break-word; }
+		.prompts-turn.user { border-left: 3px solid #6366f1; }
+		.prompts-turn.assistant { border-left: 3px solid #34d399; }
+		.prompts-turn .meta { font-size: 11px; color: rgba(255,255,255,0.45); margin-bottom: 4px; }
+		#dchat-prompts-panel {
+			display: none;
+			flex-direction: column;
+			flex: 1;
+			min-height: 0;
+			padding: 8px 10px 12px;
+			gap: 8px;
+		}
+		#dchat-prompts-panel.active { display: flex; }
+		#dchat-prompts-panel .prompts-toolbar {
+			display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+		}
+		#dchat-prompts-panel .prompts-toolbar .title {
+			flex: 1; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.85);
+			overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+		}
+		#dchat-prompts-scroll-inline {
+			flex: 1; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch;
+			font-size: 12px; line-height: 1.4;
+		}
+		#dchat-community-list.prompts-hidden { display: none !important; }
+		#share-modal-inner, #rename-modal-inner, #community-upload-modal-inner {
 			background: rgba(30, 30, 40, 0.98);
 			border-radius: 16px;
 			padding: 24px;
@@ -1701,6 +1752,8 @@
 		body.display-only #export-modal,
 		body.display-only #share-modal,
 		body.display-only #rename-modal,
+		body.display-only #community-upload-modal,
+		body.display-only #prompts-modal,
 		body.display-only #status,
 		body.display-only #ui-toggle,
 		body.display-only #cardboard-btn,
@@ -1778,6 +1831,35 @@
 				<div class="share-rename-buttons">
 					<button id="share-close-btn" class="btn-secondary">Done</button>
 					<button id="share-copy-btn" class="btn-primary">Copy link</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Community upload confirm (privacy + include chat) -->
+		<div id="community-upload-modal">
+			<div id="community-upload-modal-inner">
+				<h3>Upload to Community</h3>
+				<p id="community-upload-error" style="display:none;margin:0 0 10px;padding:8px 10px;border-radius:8px;background:rgba(248,113,113,0.15);color:#fca5a5;font-size:13px;line-height:1.35"></p>
+				<label for="community-upload-name">Scene Name</label>
+				<input type="text" id="community-upload-name" autocomplete="off" />
+				<label class="share-modal-check">
+					<input type="checkbox" id="community-upload-include-chat" checked />
+					<span>Include chat — prompts that built this scene will be <strong>public</strong> with the upload (images and secrets stripped).</span>
+				</label>
+				<div class="share-rename-buttons">
+					<button id="community-upload-cancel" class="btn-secondary">Cancel</button>
+					<button id="community-upload-confirm" class="btn-primary">Upload</button>
+				</div>
+			</div>
+		</div>
+
+		<!-- Read-only community prompts viewer (fallback overlay; primary is inline in Community tab) -->
+		<div id="prompts-modal">
+			<div id="prompts-modal-inner">
+				<h3 id="prompts-modal-title">Scene prompts</h3>
+				<div id="prompts-modal-scroll"></div>
+				<div class="share-rename-buttons">
+					<button id="prompts-modal-close" class="btn-secondary">Close</button>
 				</div>
 			</div>
 		</div>
@@ -1998,6 +2080,13 @@
 					<div id="dchat-community-loadmode"></div>
 					<p class="dchat-community-loadhint">Clear first loads onto a blank scene. Layer keeps what is already there. Loading a scene again never stacks a second copy.</p>
 					<div id="dchat-community-list"></div>
+					<div id="dchat-prompts-panel" aria-live="polite">
+						<div class="prompts-toolbar">
+							<button type="button" id="dchat-prompts-back" class="dchat-btn secondary">Back</button>
+							<div class="title" id="dchat-prompts-title">Prompts</div>
+						</div>
+						<div id="dchat-prompts-scroll-inline"></div>
+					</div>
 				</div>
 
 				<div id="dchat-community-section-themes" class="dchat-community-section">

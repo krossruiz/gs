@@ -128,25 +128,55 @@ export function highlightJs(source) {
 export function mountCodeHighlight(textarea, codeEl, opts = {}) {
 	const pre = opts.pre || codeEl.closest('pre') || codeEl;
 	let raf = 0;
+	let timer = 0;
+	const LARGE_CHARS = 20000;
+	const INPUT_DEBOUNCE_MS = 100;
+	const LARGE_DEBOUNCE_MS = 180;
 
 	function syncScroll() {
 		pre.scrollTop = textarea.scrollTop;
 		pre.scrollLeft = textarea.scrollLeft;
 	}
 
-	function refresh() {
+	function paint() {
 		const v = textarea.value;
-		// Trailing newline keeps pre height matched when the last line is empty.
-		codeEl.innerHTML = highlightJs(v) + '\n';
+		// Huge layered scenes: escaping alone avoids multi-100KB HTML stalls.
+		// Full tokenize still runs for typical / medium editors.
+		if (v.length > 80000) {
+			codeEl.textContent = v + '\n';
+		} else {
+			codeEl.innerHTML = highlightJs(v) + '\n';
+		}
 		syncScroll();
 	}
 
+	function cancelScheduled() {
+		if (timer) { clearTimeout(timer); timer = 0; }
+		if (raf) { cancelAnimationFrame(raf); raf = 0; }
+	}
+
+	function schedulePaint(delayMs) {
+		cancelScheduled();
+		if (delayMs <= 0) {
+			raf = requestAnimationFrame(() => { raf = 0; paint(); });
+			return;
+		}
+		timer = setTimeout(() => {
+			timer = 0;
+			raf = requestAnimationFrame(() => { raf = 0; paint(); });
+		}, delayMs);
+	}
+
+	function refresh() {
+		// Programmatic sync (layer/clear load): defer highlight so THREE scene
+		// setup isn't competing with a huge innerHTML on the same turn.
+		const len = textarea.value.length;
+		schedulePaint(len > LARGE_CHARS ? LARGE_DEBOUNCE_MS : 0);
+	}
+
 	function onInput() {
-		if (raf) cancelAnimationFrame(raf);
-		raf = requestAnimationFrame(() => {
-			raf = 0;
-			refresh();
-		});
+		const len = textarea.value.length;
+		schedulePaint(len > LARGE_CHARS ? LARGE_DEBOUNCE_MS : INPUT_DEBOUNCE_MS);
 	}
 
 	textarea.addEventListener('input', onInput);
@@ -156,7 +186,7 @@ export function mountCodeHighlight(textarea, codeEl, opts = {}) {
 	return {
 		refresh,
 		destroy() {
-			if (raf) cancelAnimationFrame(raf);
+			cancelScheduled();
 			textarea.removeEventListener('input', onInput);
 			textarea.removeEventListener('scroll', syncScroll);
 		}
