@@ -5,11 +5,6 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { buildButtonLayout, drawButtonsToCanvas, hitTestButtons, mountButtonsToDOM } from './menuSystem.js';
 import { paintElementToCanvas } from './htmlInCanvas.js';
 import { mountCodeHighlight } from './syntaxHighlight.js';
-import {
-	createSceneContextController,
-	buildChatTranscript,
-	trimSceneCode
-} from './sceneContext.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
@@ -742,10 +737,6 @@ let communityThemesCache = [];
 let communitySection = 'scenes'; // Community tab: 'scenes' | 'themes'
 // Community scene load: 'clear' blanks the world first (default); 'layer' adds.
 let communityLoadMode = 'clear';
-const sceneCtx = createSceneContextController();
-window.__gsSceneCtx = sceneCtx; // debug: inspect / verify attachment in DevTools
-let lastSceneCtxNote = ''; // last attachment kind for lightweight UI/status
-let selectedChatModelLabel = '';
 // Bumped by a clear-load (and used to drop stale applies). See beginCommunityLoad.
 let communityClearEpoch = 0;
 let communityLayerCancel = 0;
@@ -2742,7 +2733,6 @@ async function applyCodeFromEditor({ fromLive = false } = {}) {
 		}
 		updateCodeEditorHint();
 		setCodeEditorStatus(fromLive ? 'Live applied' : 'Applied', 'ok');
-		sceneCtx.noteExternalMutation(normalized, 'Code tab');
 		renderScenePanel();
 	} catch (err) {
 		console.error('Code editor apply error:', err);
@@ -2818,7 +2808,6 @@ function clearSceneContent() {
 	for (const sc of loadedScenes) sc.active = false;
 	executedCodeBlocks = [];
 	clearUserObjects();
-	sceneCtx.clearAll();
 	notifyCodeEditorExternalChange();
 	renderScenePanel();
 	updateStatus('Scene cleared', 'connected');
@@ -3127,73 +3116,13 @@ async function copyText(text) {
 	return ok;
 }
 
-const communityUploadModal = document.getElementById('community-upload-modal');
-const communityUploadName = document.getElementById('community-upload-name');
-const communityUploadIncludeChat = document.getElementById('community-upload-include-chat');
-const communityUploadCancel = document.getElementById('community-upload-cancel');
-const communityUploadConfirm = document.getElementById('community-upload-confirm');
-
-function setCommunityUploadError(msg) {
-	const el = document.getElementById('community-upload-error');
-	if (!el) {
-		if (msg) window.alert(msg);
-		return;
-	}
-	if (!msg) {
-		el.style.display = 'none';
-		el.textContent = '';
-		return;
-	}
-	el.textContent = msg;
-	el.style.display = 'block';
-}
-
 function uploadCurrentSceneToCommunity() {
-	if (displayOnlyMode) {
-		window.alert('Uploads are disabled in display-only view.');
-		return;
-	}
+	if (displayOnlyMode) return;
 	const name = (loadedScenes.find(s => s.active)?.name) || 'My Scene';
 	const sceneData = buildSceneData(name);
-	const empty = !sceneData.codeBlocks.length;
-
-	// Always open the Include-chat dialog (even when empty / when the
-	// community API is unavailable). #status is hidden in CSS, so silent
-	// updateStatus() looked like a dead click.
-	if (communityUploadName) communityUploadName.value = name;
-	if (communityUploadIncludeChat) communityUploadIncludeChat.checked = true;
-	setCommunityUploadError(empty
-		? 'Nothing to upload yet — add or load a scene (or Apply code) first.'
-		: '');
-	if (communityUploadConfirm) communityUploadConfirm.disabled = empty;
-	if (communityUploadModal) {
-		communityUploadModal.classList.add('visible');
-		communityUploadName?.focus();
-		communityUploadName?.select();
-	} else if (empty) {
-		window.alert('Nothing to upload — add or load a scene first.');
-	} else {
-		confirmUploadCommunityScene(name, true);
-	}
-}
-
-function hideCommunityUploadModal() {
-	if (communityUploadModal) communityUploadModal.classList.remove('visible');
-}
-
-function confirmUploadCommunityScene(name, includeChat) {
-	hideCommunityUploadModal();
-	const sceneData = buildSceneData(name || 'My Scene');
 	if (sceneData.codeBlocks.length === 0) {
 		updateStatus('Nothing to upload - add or load something first', 'error');
 		return;
-	}
-	if (includeChat) {
-		const model =
-			selectedBackend === 'ollama' ? (selectedOllamaModel || 'ollama')
-			: (selectedChatModelLabel || selectedBackend || '');
-		const chat = buildChatTranscript(messages, { model });
-		if (chat) sceneData.chat = chat;
 	}
 	updateStatus('Uploading to community...', 'connecting');
 	fetch('/api/community-scenes', {
@@ -3207,21 +3136,6 @@ function confirmUploadCommunityScene(name, includeChat) {
 		showShareModal(sharePayloadFromMeta(data.scene || { name, id: data.id }, data));
 	}).catch(err => {
 		updateStatus(`Upload error: ${err.message}`, 'error');
-		// Re-open modal with a visible error (#status is display:none).
-		setCommunityUploadError(err.message || 'Upload failed');
-		if (communityUploadConfirm) communityUploadConfirm.disabled = false;
-		if (communityUploadModal) communityUploadModal.classList.add('visible');
-		else window.alert(`Upload error: ${err.message}`);
-	});
-}
-
-if (communityUploadCancel) communityUploadCancel.addEventListener('click', hideCommunityUploadModal);
-if (communityUploadConfirm) {
-	communityUploadConfirm.addEventListener('click', () => {
-		confirmUploadCommunityScene(
-			communityUploadName?.value?.trim() || 'My Scene',
-			!communityUploadIncludeChat || communityUploadIncludeChat.checked
-		);
 	});
 }
 
@@ -3305,75 +3219,6 @@ function appendCommunityDatesEl(parent, item) {
 	return dates;
 }
 
-const dchatPromptsPanel = document.getElementById('dchat-prompts-panel');
-const dchatPromptsScroll = document.getElementById('dchat-prompts-scroll-inline');
-const dchatPromptsTitle = document.getElementById('dchat-prompts-title');
-const dchatPromptsBack = document.getElementById('dchat-prompts-back');
-const promptsModal = document.getElementById('prompts-modal');
-const promptsModalTitle = document.getElementById('prompts-modal-title');
-const promptsModalScroll = document.getElementById('prompts-modal-scroll');
-const promptsModalClose = document.getElementById('prompts-modal-close');
-
-function renderPromptsTurns(container, chat, sceneName) {
-	if (!container) return;
-	container.innerHTML = '';
-	const turns = chat?.turns || [];
-	if (!turns.length) {
-		const empty = document.createElement('div');
-		empty.className = 'dchat-scene-empty';
-		empty.textContent = 'No prompts were saved with this scene.';
-		container.appendChild(empty);
-		return;
-	}
-	for (const t of turns) {
-		const el = document.createElement('div');
-		el.className = 'prompts-turn ' + (t.role === 'user' ? 'user' : 'assistant');
-		const meta = document.createElement('div');
-		meta.className = 'meta';
-		const when = t.ts ? formatCommunityDate(t.ts) : '';
-		meta.textContent = (t.role === 'user' ? 'You' : 'Assistant') +
-			(t.model ? ` · ${t.model}` : '') +
-			(when ? ` · ${when}` : '');
-		const body = document.createElement('div');
-		body.textContent = t.content || '';
-		el.append(meta, body);
-		container.appendChild(el);
-	}
-}
-
-function closeCommunityPrompts() {
-	if (dchatPromptsPanel) dchatPromptsPanel.classList.remove('active');
-	if (dchatCommunityList) dchatCommunityList.classList.remove('prompts-hidden');
-	if (promptsModal) promptsModal.classList.remove('visible');
-}
-
-async function openCommunityPrompts(cs) {
-	if (!cs) return;
-	updateStatus('Loading prompts…', 'connecting');
-	try {
-		const fetchUrl = cs.id ? `/api/community-scenes/${encodeURIComponent(cs.id)}` : cs.url;
-		const res = await fetch(fetchUrl);
-		const data = await res.json();
-		if (!res.ok) throw new Error(data.error || 'Failed to load scene');
-		// Never import into active chat / AI context — view only.
-		const chat = data.chat || null;
-		const title = `Prompts — ${data.name || cs.name || 'Scene'}`;
-		if (dchatPromptsTitle) dchatPromptsTitle.textContent = title;
-		renderPromptsTurns(dchatPromptsScroll, chat, data.name);
-		if (dchatCommunityList) dchatCommunityList.classList.add('prompts-hidden');
-		if (dchatPromptsPanel) dchatPromptsPanel.classList.add('active');
-		// Also fill overlay modal for narrow / non-tab contexts
-		if (promptsModalTitle) promptsModalTitle.textContent = title;
-		renderPromptsTurns(promptsModalScroll, chat, data.name);
-		updateStatus(chat?.turns?.length ? 'Prompts loaded (read-only)' : 'No prompts on this scene', 'connected');
-	} catch (err) {
-		updateStatus(`Prompts error: ${err.message}`, 'error');
-	}
-}
-
-if (dchatPromptsBack) dchatPromptsBack.addEventListener('click', closeCommunityPrompts);
-if (promptsModalClose) promptsModalClose.addEventListener('click', closeCommunityPrompts);
-
 function renderCommunitySceneList(scenes) {
 	communityScenesCache = scenes;
 	if (scenePanelSubTab === 'community') renderScenePanel();
@@ -3413,12 +3258,6 @@ function renderCommunitySceneList(scenes) {
 		load.textContent = 'Load';
 		load.addEventListener('click', () => { loadCommunityScene(cs).catch(() => {}); });
 
-		const promptsBtn = document.createElement('button');
-		promptsBtn.className = 'dchat-btn secondary';
-		promptsBtn.textContent = 'Prompts';
-		promptsBtn.title = 'View the public chat that built this scene (read-only; not imported into your chat)';
-		promptsBtn.addEventListener('click', () => { openCommunityPrompts(cs).catch(() => {}); });
-
 		const share = document.createElement('button');
 		share.className = 'dchat-btn';
 		share.textContent = 'Share';
@@ -3431,7 +3270,7 @@ function renderCommunitySceneList(scenes) {
 		rename.textContent = 'Rename';
 		rename.addEventListener('click', () => showRenameModal(cs));
 
-		actions.append(load, promptsBtn, share, rename);
+		actions.append(load, share, rename);
 		item.append(nameRow, actions);
 		dchatCommunityList.appendChild(item);
 	}
@@ -3517,7 +3356,6 @@ function blankLiveSceneForCommunityLoad() {
 	for (const sc of loadedScenes) sc.active = false;
 	executedCodeBlocks = [];
 	clearUserObjects();
-	sceneCtx.clearAll();
 }
 
 function runLoadedSceneCode(sc) {
@@ -3619,7 +3457,6 @@ function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
 				blankLiveSceneForCommunityLoad();
 				const sc = upsertCommunityLoadedScene(data, data.name || name, resolvedKey);
 				await runLoadedSceneCode(sc);
-				sceneCtx.noteCommunityLoad(sc, { mode: 'clear' });
 				finishCommunityLoadUi();
 				updateStatus(`Loaded "${sc.name}"`, 'connected');
 				return sc;
@@ -3631,7 +3468,6 @@ function loadCommunityScene(cs, { mode = communityLoadMode } = {}) {
 			}
 			const sc = upsertCommunityLoadedScene(data, data.name || name, resolvedKey);
 			await runLoadedSceneCode(sc);
-			sceneCtx.noteCommunityLoad(sc, { mode: 'layer' });
 			finishCommunityLoadUi();
 			updateStatus(`Layered "${sc.name}"`, 'connected');
 			return sc;
@@ -5792,40 +5628,11 @@ async function sendMessage(userMessage) {
 
 	const { content: userContent, images: ollamaImages } = buildUserContent(userMessage, attachments, selectedBackend);
 
-	// Piggyback loaded-scene context on this turn only (no extra API call).
-	// Context goes ONLY into the outbound API payload (apiContent) — never into
-	// stored message.content / displayText / community transcripts.
-	const sceneAtt = sceneCtx.consumeAttachmentForSend();
-	lastSceneCtxNote = sceneAtt ? sceneAtt.kind : '';
-	const typedDisplay =
-		userMessage + (attachments.length > 0 ? `\n\n📎 ${attachments.map(a => a.name).join(', ')}` : '');
-	let apiUserContent = userContent;
-	if (sceneAtt?.text) {
-		const prefix = sceneAtt.text;
-		if (typeof userContent === 'string') {
-			apiUserContent = prefix + '\n\n' + userContent;
-		} else if (Array.isArray(userContent)) {
-			apiUserContent = [{ type: 'text', text: prefix }, ...userContent];
-		} else {
-			apiUserContent = prefix + '\n\n' + String(userContent ?? '');
-		}
-		console.info('[gs] scene context attached:', sceneAtt.kind, 'chars=', sceneAtt.text.length);
-		updateStatus(`Sending… (scene context: ${sceneAtt.kind})`, '');
-	}
-
-	// Stored history is context-free; apiContent is used only when calling the model.
-	messages.push({
-		role: 'user',
-		content: typeof userContent === 'string' ? userContent : typedDisplay,
-		displayText: typedDisplay,
-		userText: userMessage,
-		...(sceneAtt?.text ? { apiContent: apiUserContent } : {}),
-		...(ollamaImages ? { images: ollamaImages } : {}),
-		ts: new Date().toISOString()
-	});
+	// Add user message to both arrays
+	messages.push({ role: 'user', content: userContent, ...(ollamaImages ? { images: ollamaImages } : {}) });
 	displayMessages.push({
 		role: 'user',
-		content: typedDisplay + (sceneAtt ? `\n\n[scene context attached: ${sceneAtt.kind}]` : '')
+		content: userMessage + (attachments.length > 0 ? `\n\n📎 ${attachments.map(a => a.name).join(', ')}` : '')
 	});
 	chatScrollOffset = 0; // auto-scroll to bottom on new message
 
@@ -5842,7 +5649,7 @@ async function sendMessage(userMessage) {
 		if (selectedBackend === 'ollama') {
 			data = await callOllamaDirect(
 				cachedPrompts?.systemPrompt || '',
-				messages.map(m => ({ role: m.role, content: m.apiContent ?? m.content, ...(m.images ? { images: m.images } : {}) })),
+				messages.map(m => ({ role: m.role, content: m.content, ...(m.images ? { images: m.images } : {}) })),
 				selectedOllamaModel
 			);
 		} else {
@@ -5854,11 +5661,9 @@ async function sendMessage(userMessage) {
 				body: JSON.stringify({
 					messages: messages.map(m => ({
 						role: m.role,
-						content: m.apiContent ?? m.content
+						content: m.content
 					})),
-					backend: selectedBackend,
-					// debug aid only — server ignores unknown fields
-					_gsSceneCtx: lastSceneCtxNote || undefined
+					backend: selectedBackend
 				})
 			});
 
@@ -5880,7 +5685,7 @@ async function sendMessage(userMessage) {
 		const { displayText, codeBlocks } = parseVrExecBlocks(rawText);
 
 		// Store raw text for API context, cleaned text for display
-		messages.push({ role: 'assistant', content: rawText, ts: new Date().toISOString() });
+		messages.push({ role: 'assistant', content: rawText });
 		displayMessages.push({ role: 'assistant', content: displayText });
 
 		if (codeBlocks.length > 0) {
@@ -5921,8 +5726,6 @@ async function sendMessage(userMessage) {
 			if (execCount > 0) {
 				const fixNote = fixCount > 0 ? ` (${fixCount} auto-fixed)` : '';
 				updateStatus(`Connected — ran ${execCount} block${execCount > 1 ? 's' : ''}${fixNote}`, 'connected');
-				// AI edits are already in chat history — mark revision seen, don't resend.
-				sceneCtx.noteAiMutation(buildCodeEditorSource());
 				notifyCodeEditorExternalChange();
 			} else {
 				updateStatus('Connected', 'connected');
