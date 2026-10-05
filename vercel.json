@@ -4,10 +4,24 @@
     {
       "src": "site-source/server.js",
       "use": "@vercel/node",
-      "config": { "includeFiles": ["site-source/index.html", "site-source/main.js", "site-source/htmlInCanvas.js", "site-source/menuSystem.js", "site-source/threejsAddons/**", "site-source/vendor_modules/**"], "maxDuration": 60 }
+      "config": {
+        "includeFiles": [
+          "site-source/index.html",
+          "site-source/main.js",
+          "site-source/syntaxHighlight.js",
+          "site-source/htmlInCanvas.js",
+          "site-source/menuSystem.js",
+          "site-source/threejsAddons/**",
+          "site-source/vendor_modules/**"
+        ],
+        "maxDuration": 60
+      }
     }
   ],
   "routes": [
-    { "src": "/(.*)", "dest": "site-source/server.js" }
+    {
+      "src": "/(.*)",
+      "dest": "site-source/server.js"
+    }
   ]
 }
