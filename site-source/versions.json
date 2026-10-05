@@ -1,0 +1,10 @@
+{
+  "versions": [
+    {
+      "id": "0.967",
+      "label": "GS 0.967 (this build)",
+      "url": null
+    }
+  ],
+  "note": "Add older or preview builds here after publishing. Each entry: { id, label, url }. url null = this deployment; otherwise a full https URL (Vercel preview, pinned Worker, etc.)."
+}

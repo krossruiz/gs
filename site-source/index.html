@@ -1349,6 +1349,99 @@
 		.share-rename-buttons .btn-primary {
 			background: linear-gradient(135deg, #6366f1, #8b5cf6);
 		}
+
+		/* GS version control (page chrome) */
+		#gs-version-btn {
+			position: fixed;
+			left: 50%;
+			bottom: 10px;
+			transform: translateX(-50%);
+			z-index: 2500;
+			border: none;
+			border-radius: 999px;
+			padding: 8px 14px;
+			font-size: 12px;
+			font-weight: 600;
+			letter-spacing: 0.02em;
+			color: #fff;
+			cursor: pointer;
+			background: rgba(30, 30, 40, 0.92);
+			box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+			pointer-events: auto;
+			-webkit-tap-highlight-color: transparent;
+		}
+		#gs-version-btn:hover { background: rgba(50, 52, 70, 0.96); }
+		#gs-version-btn:focus-visible {
+			outline: 2px solid #8b5cf6;
+			outline-offset: 2px;
+		}
+		#gs-version-modal {
+			display: none;
+			position: fixed;
+			inset: 0;
+			z-index: 3100;
+			background: rgba(0, 0, 0, 0.55);
+			align-items: center;
+			justify-content: center;
+			pointer-events: auto;
+		}
+		#gs-version-modal.visible { display: flex; }
+		#gs-version-modal-inner {
+			background: rgba(30, 30, 40, 0.98);
+			border-radius: 16px;
+			padding: 24px;
+			width: min(420px, 92vw);
+			max-height: min(70vh, 520px);
+			overflow: auto;
+			box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+			color: #fff;
+		}
+		#gs-version-modal-inner h3 {
+			margin: 0 0 8px;
+			font-size: 18px;
+		}
+		#gs-version-modal-note {
+			margin: 0 0 14px;
+			font-size: 12px;
+			line-height: 1.4;
+			opacity: 0.65;
+		}
+		#gs-version-list {
+			display: flex;
+			flex-direction: column;
+			gap: 8px;
+		}
+		.gs-version-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 10px;
+			width: 100%;
+			box-sizing: border-box;
+			border: 1px solid rgba(255,255,255,0.12);
+			border-radius: 12px;
+			padding: 12px 14px;
+			background: rgba(255,255,255,0.06);
+			color: #fff;
+			font-size: 14px;
+			font-weight: 600;
+			cursor: pointer;
+			text-align: left;
+		}
+		.gs-version-row:hover { background: rgba(255,255,255,0.12); }
+		.gs-version-row.current {
+			border-color: rgba(139, 92, 246, 0.7);
+			background: rgba(99, 102, 241, 0.22);
+		}
+		.gs-version-row .gs-version-meta {
+			font-size: 11px;
+			font-weight: 500;
+			opacity: 0.7;
+			flex-shrink: 0;
+		}
+		#gs-version-modal .share-rename-buttons { margin-top: 16px; }
+		body.display-only #gs-version-btn { display: none !important; }
+		body.display-only #gs-version-modal { display: none !important; }
 		.dchat-scene-actions {
 			display: flex;
 			gap: 6px;
@@ -2024,6 +2117,20 @@
 		<div class="dchat-resize corner corner-se" data-dir="se"></div>
 	</div>
 		<a id="editor-link" href="/">Open in editor</a>
+
+
+	<!-- GS version control -->
+	<button type="button" id="gs-version-btn" title="Choose GS version" aria-haspopup="dialog" aria-controls="gs-version-modal">GS v…</button>
+	<div id="gs-version-modal" aria-hidden="true">
+		<div id="gs-version-modal-inner" role="dialog" aria-labelledby="gs-version-title">
+			<h3 id="gs-version-title">GS version</h3>
+			<p id="gs-version-modal-note">Pick a published build. Older versions appear here when listed in versions.json.</p>
+			<div id="gs-version-list"></div>
+			<div class="share-rename-buttons">
+				<button type="button" id="gs-version-close" class="btn-secondary">Close</button>
+			</div>
+		</div>
+	</div>
 
 	<script type="importmap">
 	{

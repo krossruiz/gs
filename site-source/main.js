@@ -5,6 +5,12 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { buildButtonLayout, drawButtonsToCanvas, hitTestButtons, mountButtonsToDOM } from './menuSystem.js';
 import { paintElementToCanvas } from './htmlInCanvas.js';
 import { mountCodeHighlight } from './syntaxHighlight.js';
+import {
+	GS_VERSION,
+	loadVersionManifest,
+	mergeVersionList,
+	isCurrentVersionEntry
+} from './version.js';
 import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
 import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
@@ -6811,6 +6817,102 @@ async function applyHdriFromUrl(url, { persist = false, objectUrl = null } = {})
 	}
 }
 
+
+// ============================================================================
+// GS version badge + picker (bottom of screen)
+// ============================================================================
+function initGsVersionPicker() {
+	const btn = document.getElementById('gs-version-btn');
+	const modal = document.getElementById('gs-version-modal');
+	const listEl = document.getElementById('gs-version-list');
+	const closeBtn = document.getElementById('gs-version-close');
+	if (!btn || !modal || !listEl) return;
+
+	btn.textContent = `GS v${GS_VERSION}`;
+	btn.setAttribute('aria-label', `GS version ${GS_VERSION}. Choose version.`);
+
+	let versions = mergeVersionList(null);
+	let loading = false;
+
+	function hide() {
+		modal.classList.remove('visible');
+		modal.setAttribute('aria-hidden', 'true');
+	}
+
+	function show() {
+		modal.classList.add('visible');
+		modal.setAttribute('aria-hidden', 'false');
+		closeBtn?.focus();
+	}
+
+	function renderList() {
+		listEl.innerHTML = '';
+		for (const entry of versions) {
+			const row = document.createElement('button');
+			row.type = 'button';
+			row.className = 'gs-version-row';
+			const current = isCurrentVersionEntry(entry);
+			if (current) row.classList.add('current');
+			const label = document.createElement('span');
+			label.textContent = entry.label || `GS ${entry.id}`;
+			const meta = document.createElement('span');
+			meta.className = 'gs-version-meta';
+			meta.textContent = current ? 'Current' : (entry.url ? 'Open' : entry.id);
+			row.appendChild(label);
+			row.appendChild(meta);
+			row.addEventListener('click', () => {
+				if (current || entry.url == null || entry.url === '') {
+					hide();
+					return;
+				}
+				try {
+					const target = new URL(entry.url, location.href);
+					if (target.href === location.href) {
+						hide();
+						return;
+					}
+					location.assign(target.href);
+				} catch (err) {
+					console.warn('[gs] bad version url', entry, err);
+					updateStatus(`Invalid version URL for ${entry.id}`, 'error');
+				}
+			});
+			listEl.appendChild(row);
+		}
+	}
+
+	async function refreshVersions() {
+		if (loading) return;
+		loading = true;
+		try {
+			const manifest = await loadVersionManifest();
+			versions = mergeVersionList(manifest);
+		} catch (err) {
+			console.warn('[gs] versions.json load failed', err);
+			versions = mergeVersionList(null);
+		} finally {
+			loading = false;
+			renderList();
+		}
+	}
+
+	btn.addEventListener('click', () => {
+		show();
+		refreshVersions();
+		renderList();
+	});
+	closeBtn?.addEventListener('click', hide);
+	modal.addEventListener('click', (e) => {
+		if (e.target === modal) hide();
+	});
+	window.addEventListener('keydown', (e) => {
+		if (e.key === 'Escape' && modal.classList.contains('visible')) hide();
+	});
+
+	renderList();
+	refreshVersions();
+}
+
 function initHdriControls() {
 	if (dchatHdriBg) {
 		hdriUseAsBackground = dchatHdriBg.checked;
@@ -6854,6 +6956,7 @@ function initHdriControls() {
 }
 
 initHdriControls();
+initGsVersionPicker();
 
 if (dchatCodeEditor && dchatCodeHighlight) {
 	codeHighlightApi = mountCodeHighlight(dchatCodeEditor, dchatCodeHighlight);
