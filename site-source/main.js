@@ -4,6 +4,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { buildButtonLayout, drawButtonsToCanvas, hitTestButtons, mountButtonsToDOM } from './menuSystem.js';
 import { paintElementToCanvas } from './htmlInCanvas.js';
+import { mountCodeHighlight } from './syntaxHighlight.js';
+import { HDRLoader } from 'three/examples/jsm/loaders/HDRLoader.js';
+import { EXRLoader } from 'three/examples/jsm/loaders/EXRLoader.js';
 
 // ============================================================================
 // Configuration
@@ -232,7 +235,7 @@ const desktopOllamaModelRow = document.getElementById('desktop-ollama-model-row'
 const desktopOllamaModelSelect = document.getElementById('desktop-ollama-model-select');
 const desktopChatMinimizeBtn = document.getElementById('desktop-chat-minimize');
 const desktopChatExpandBtn = document.getElementById('desktop-chat-expand');
-const desktopChatReopenBtn = document.getElementById('desktop-chat-reopen');
+const desktopChatReopenBtn = null; // Show Chat removed — restore via Show UI
 const chatOverlayBar = document.getElementById('chat-overlay');
 const dchatEnvModeMount = document.getElementById('dchat-env-mode');
 const dchatEnvControls = document.getElementById('dchat-env-controls');
@@ -260,6 +263,14 @@ const dchatCodeApply = document.getElementById('dchat-code-apply');
 const dchatCodeRevert = document.getElementById('dchat-code-revert');
 const dchatCodeStatus = document.getElementById('dchat-code-status');
 const dchatCodeHint = document.getElementById('dchat-code-hint');
+const dchatCodeHighlight = document.getElementById('dchat-code-highlight');
+const dchatHdriFile = document.getElementById('dchat-hdri-file');
+const dchatHdriPick = document.getElementById('dchat-hdri-pick');
+const dchatHdriClear = document.getElementById('dchat-hdri-clear');
+const dchatHdriUrl = document.getElementById('dchat-hdri-url');
+const dchatHdriUrlLoad = document.getElementById('dchat-hdri-url-load');
+const dchatHdriBg = document.getElementById('dchat-hdri-bg');
+const dchatHdriStatus = document.getElementById('dchat-hdri-status');
 
 
 // ============================================================================
@@ -737,6 +748,15 @@ let chatSection = 'scene'; // Chat tab: 'scene' | 'theme'
 let displayOnlyMode = false; // share URL opened with editor chrome stripped
 let pendingShare = null; // share modal payload { id, name, editorUrl, viewUrl }
 let codeEditorDirty = false; // user has unsaved edits in Code tab
+let codeHighlightApi = null; // set when Code tab highlight layer mounts
+// HDRI state (textures filled later by initHdriControls; checked in applyEnvironmentMode)
+let hdriEquirect = null;
+let hdriPMREM = null;
+let hdriObjectUrl = null;
+let hdriPersistUrl = null;
+let hdriUseAsBackground = true;
+let pmremGenerator = null;
+const HDRI_URL_STORAGE_KEY = 'gs-hdri-url';
 let codeEditorApplying = false;
 let codeEditorLiveTimer = null;
 let codeEditorLastApplied = ''; // last successfully applied / synced source
@@ -941,7 +961,6 @@ function isArUiTouchTarget(target) {
 		target.closest('#mobile-xr-walk') ||
 		target.closest('#mobile-xr-gizmo-bar') ||
 		target.closest('#desktop-chat') ||
-		target.closest('#desktop-chat-reopen') ||
 		target.closest('#files-picker-modal') ||
 		target.closest('#export-modal') ||
 		target.closest('#share-modal') ||
@@ -1803,6 +1822,7 @@ function xrCodeEditingActive() {
 function setCodeEditorText(text) {
 	if (!dchatCodeEditor) return;
 	dchatCodeEditor.value = text;
+	codeHighlightApi?.refresh();
 	markCodeEditorDirty();
 	renderScenePanel();
 }
@@ -2422,6 +2442,15 @@ function applyEnvironmentMode() {
 	const inMobileXR = typeof mobileXRMode !== 'undefined' && !!mobileXRMode;
 	const inWebXR = !!(renderer && renderer.xr && renderer.xr.isPresenting);
 
+	// Active equirect HDRI as background wins over solid color / skybox.
+	if (hdriEquirect && hdriUseAsBackground) {
+		scene.background = hdriEquirect;
+		if (vrSkybox) vrSkybox.visible = false;
+		if (!inWebXR && !inMobileXR) renderer.setClearColor(0x000000, 1);
+		else renderer.setClearColor(0x000000, 0.0);
+		return;
+	}
+
 	// Desktop / mobile browser (not in an XR session): solid scene background
 	// so Environment tab color changes are visible immediately.
 	if (!inWebXR && !inMobileXR) {
@@ -2639,6 +2668,7 @@ function syncCodeEditorFromState({ force = false } = {}) {
 	if (codeEditorDirty && !force) return;
 	const src = buildCodeEditorSource();
 	dchatCodeEditor.value = src;
+	codeHighlightApi?.refresh();
 	codeEditorLastApplied = src;
 	codeEditorDirty = false;
 	updateCodeEditorHint();
@@ -2696,6 +2726,7 @@ async function applyCodeFromEditor({ fromLive = false } = {}) {
 		// Keep caret-friendly: only rewrite textarea if markers/order changed meaningfully
 		if (!codeEditorDirty || dchatCodeEditor.value.trim() === text.trim()) {
 			dchatCodeEditor.value = normalized;
+			codeHighlightApi?.refresh();
 			codeEditorDirty = false;
 		} else {
 			codeEditorDirty = false;
@@ -2722,6 +2753,7 @@ function revertCodeEditor() {
 	}
 	const src = codeEditorLastApplied || buildCodeEditorSource();
 	dchatCodeEditor.value = src;
+	codeHighlightApi?.refresh();
 	codeEditorDirty = false;
 	updateCodeEditorHint();
 	setCodeEditorStatus('Reverted', '');
@@ -2999,7 +3031,6 @@ function applyDisplayOnlyMode() {
 	} else if (desktopChat) {
 		desktopChat.classList.add('hidden');
 	}
-	if (desktopChatReopenBtn) desktopChatReopenBtn.classList.remove('visible');
 	// XRButton injects a bottom-centered <button> without a stable id.
 	for (const btn of document.querySelectorAll('#app button, body > button')) {
 		const t = (btn.textContent || '').toLowerCase();
@@ -5904,6 +5935,12 @@ function applyLocomotionInput(dt, refCamera, mx, my, rx, ry) {
 			.addScaledVector(upVec, ry)          // Q/push right-stick up = ascend
 			.multiplyScalar(MOVE_SPEED * dt);
 		player.position.add(_locoMove);
+		// Keep OrbitControls target in sync on desktop. Moving only the player
+		// rig leaves the orbit target behind; damping then fights WASD (huge
+		// jumps, continued drift after keyup) on both editor and /s/ share views.
+		if (orbitControls && orbitControls.enabled) {
+			orbitControls.target.add(_locoMove);
+		}
 	}
 
 	// Turn (right stick x / no keyboard equivalent). Yaw around world up
@@ -5951,20 +5988,34 @@ function updateLocomotion(dt, session) {
 const _keysDown = new Set();
 const LOCOMOTION_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE']);
 
+function isTypingIntoField() {
+	const el = document.activeElement;
+	if (!el) return false;
+	const tag = el.tagName;
+	if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+	if (el.isContentEditable) return true;
+	return false;
+}
+
 document.addEventListener('keydown', (e) => {
 	if (!LOCOMOTION_KEYS.has(e.code)) return;
-	const activeTag = document.activeElement && document.activeElement.tagName;
-	if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+	if (isTypingIntoField()) return;
 	if (renderer.xr.isPresenting) return;
+	e.preventDefault();
 	_keysDown.add(e.code);
 });
 document.addEventListener('keyup', (e) => {
+	if (!LOCOMOTION_KEYS.has(e.code)) return;
 	_keysDown.delete(e.code);
 });
 window.addEventListener('blur', () => _keysDown.clear());
 
 function updateKeyboardLocomotion(dt) {
 	if (renderer.xr.isPresenting || _keysDown.size === 0) return;
+	if (isTypingIntoField()) {
+		_keysDown.clear();
+		return;
+	}
 	let mx = 0, my = 0, ry = 0;
 	if (_keysDown.has('KeyW')) my -= 1;
 	if (_keysDown.has('KeyS')) my += 1;
@@ -6165,10 +6216,8 @@ if (desktopMicButton) {
 }
 
 if (desktopChatMinimizeBtn) {
-	desktopChatMinimizeBtn.addEventListener('click', () => setDesktopChatMinimized(true));
-}
-if (desktopChatReopenBtn) {
-	desktopChatReopenBtn.addEventListener('click', () => setDesktopChatMinimized(false));
+	// Minimize = Hide UI; bring the panel back with Show UI only.
+	desktopChatMinimizeBtn.addEventListener('click', () => setUiCollapsed(true));
 }
 if (desktopChatExpandBtn) {
 	desktopChatExpandBtn.addEventListener('click', () => toggleDesktopChatExpanded());
@@ -6179,7 +6228,6 @@ let _chatSizeBeforeExpand = null;
 
 function setDesktopChatMinimized(minimized) {
 	desktopChat.classList.toggle('hidden', minimized);
-	if (desktopChatReopenBtn) desktopChatReopenBtn.classList.toggle('visible', minimized);
 	if (!minimized) fitDesktopChatToViewport();
 }
 
@@ -6642,6 +6690,7 @@ if (dchatCodeEditor) {
 			const v = dchatCodeEditor.value;
 			dchatCodeEditor.value = v.slice(0, start) + '	' + v.slice(end);
 			dchatCodeEditor.selectionStart = dchatCodeEditor.selectionEnd = start + 1;
+			codeHighlightApi?.refresh();
 			markCodeEditorDirty();
 		}
 	});
@@ -6677,6 +6726,139 @@ if (dchatThemeChatInput) {
 	});
 }
 
+
+// ============================================================================
+// 360 / HDRI environment (Environment tab)
+// ============================================================================
+function setHdriStatus(text, kind) {
+	if (!dchatHdriStatus) return;
+	dchatHdriStatus.textContent = text || '';
+	dchatHdriStatus.style.color = kind === 'error' ? '#f87171'
+		: kind === 'ok' ? '#34d399'
+		: 'rgba(255,255,255,0.4)';
+}
+
+function getPmremGenerator() {
+	if (!pmremGenerator) {
+		pmremGenerator = new THREE.PMREMGenerator(renderer);
+		pmremGenerator.compileEquirectangularShader();
+	}
+	return pmremGenerator;
+}
+
+function disposeHdriTextures({ revokeBlob = true } = {}) {
+	if (scene.environment === hdriPMREM) scene.environment = null;
+	if (scene.background === hdriEquirect) scene.background = null;
+	if (hdriPMREM) { hdriPMREM.dispose(); hdriPMREM = null; }
+	if (hdriEquirect) { hdriEquirect.dispose(); hdriEquirect = null; }
+	if (revokeBlob && hdriObjectUrl) {
+		URL.revokeObjectURL(hdriObjectUrl);
+		hdriObjectUrl = null;
+	}
+}
+
+function clearHdriEnvironment() {
+	disposeHdriTextures({ revokeBlob: true });
+	hdriPersistUrl = null;
+	try { localStorage.removeItem(HDRI_URL_STORAGE_KEY); } catch { /* ignore */ }
+	applyEnvironmentMode();
+	setHdriStatus('Cleared', '');
+}
+
+async function loadHdriTextureFromUrl(url) {
+	const lower = String(url).split('?')[0].toLowerCase();
+	if (lower.endsWith('.hdr') || lower.endsWith('.hdri')) {
+		return new HDRLoader().loadAsync(url);
+	}
+	if (lower.endsWith('.exr')) {
+		return new EXRLoader().loadAsync(url);
+	}
+	return new THREE.TextureLoader().loadAsync(url);
+}
+
+async function applyHdriFromUrl(url, { persist = false, objectUrl = null } = {}) {
+	if (!url) return;
+	setHdriStatus('Loading…', 'pending');
+	try {
+		const tex = await loadHdriTextureFromUrl(url);
+		tex.mapping = THREE.EquirectangularReflectionMapping;
+		const isHdr = /\.(hdr|hdri|exr)($|\?)/i.test(url);
+		tex.colorSpace = isHdr ? THREE.LinearSRGBColorSpace : THREE.SRGBColorSpace;
+		tex.needsUpdate = true;
+
+		const envRT = getPmremGenerator().fromEquirectangular(tex);
+		disposeHdriTextures({ revokeBlob: !objectUrl });
+		if (objectUrl) hdriObjectUrl = objectUrl;
+
+		hdriEquirect = tex;
+		hdriPMREM = envRT.texture;
+		scene.environment = hdriPMREM;
+		hdriUseAsBackground = !!(dchatHdriBg ? dchatHdriBg.checked : true);
+		applyEnvironmentMode();
+
+		if (persist && /^https?:\/\//i.test(url)) {
+			hdriPersistUrl = url;
+			try { localStorage.setItem(HDRI_URL_STORAGE_KEY, url); } catch { /* ignore */ }
+		} else if (objectUrl) {
+			hdriPersistUrl = null;
+		} else {
+			hdriPersistUrl = /^https?:\/\//i.test(url) ? url : null;
+		}
+		setHdriStatus(hdriPersistUrl ? 'Loaded (URL kept for reload)' : 'Loaded (local file — not persisted)', 'ok');
+	} catch (err) {
+		console.error('HDRI load failed:', err);
+		setHdriStatus('Error: ' + (err && err.message ? err.message : err), 'error');
+	}
+}
+
+function initHdriControls() {
+	if (dchatHdriBg) {
+		hdriUseAsBackground = dchatHdriBg.checked;
+		dchatHdriBg.addEventListener('change', () => {
+			hdriUseAsBackground = dchatHdriBg.checked;
+			applyEnvironmentMode();
+		});
+	}
+	if (dchatHdriPick && dchatHdriFile) {
+		dchatHdriPick.addEventListener('click', () => dchatHdriFile.click());
+		dchatHdriFile.addEventListener('change', async () => {
+			const file = dchatHdriFile.files && dchatHdriFile.files[0];
+			dchatHdriFile.value = '';
+			if (!file) return;
+			const obj = URL.createObjectURL(file);
+			await applyHdriFromUrl(obj, { persist: false, objectUrl: obj });
+		});
+	}
+	if (dchatHdriUrlLoad && dchatHdriUrl) {
+		dchatHdriUrlLoad.addEventListener('click', () => {
+			const u = (dchatHdriUrl.value || '').trim();
+			if (!u) { setHdriStatus('Enter a URL', 'error'); return; }
+			applyHdriFromUrl(u, { persist: true });
+		});
+		dchatHdriUrl.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				dchatHdriUrlLoad.click();
+			}
+		});
+	}
+	if (dchatHdriClear) dchatHdriClear.addEventListener('click', clearHdriEnvironment);
+
+	try {
+		const saved = localStorage.getItem(HDRI_URL_STORAGE_KEY);
+		if (saved && /^https?:\/\//i.test(saved)) {
+			if (dchatHdriUrl) dchatHdriUrl.value = saved;
+			applyHdriFromUrl(saved, { persist: true });
+		}
+	} catch { /* ignore */ }
+}
+
+initHdriControls();
+
+if (dchatCodeEditor && dchatCodeHighlight) {
+	codeHighlightApi = mountCodeHighlight(dchatCodeEditor, dchatCodeHighlight);
+}
+
 // Environment tab: VR mode (shared button spec, see ENV_MODE_BUTTONS/
 // handleMenuAction), color picker, brightness slider. The toggle buttons
 // themselves are (re)mounted by renderDomEnv() since their active/inactive
@@ -6698,7 +6880,10 @@ dchatBrightness.addEventListener('input', () => {
 	renderSidePanel();
 });
 dchatResetCameraBtn.addEventListener('click', () => {
+	if (player) player.position.set(0, 0, 0);
+	if (viewOffset) { viewOffset.rotation.set(0, 0, 0); viewOffset.position.set(0, 0, 0); }
 	camera.position.set(0, 1.6, 0);
+	camera.quaternion.identity();
 	orbitControls.target.set(0, 1.4, -CHAT_PANEL_DISTANCE);
 	orbitControls.update();
 });
@@ -6743,9 +6928,6 @@ function applyXrPanelVisibility(immersive = xrSessionActive()) {
 		desktopChat.classList.toggle('html-in-canvas-source', html);
 		const hideDom = displayOnlyMode || (immersive ? !html : uiCollapsed);
 		desktopChat.classList.toggle('hidden', hideDom);
-	}
-	if (desktopChatReopenBtn) {
-		desktopChatReopenBtn.classList.toggle('visible', !immersive && uiCollapsed && !displayOnlyMode);
 	}
 	if (chatOverlayBar) {
 		chatOverlayBar.style.display = '';

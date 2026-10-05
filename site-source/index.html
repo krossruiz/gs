@@ -1051,25 +1051,6 @@
 				linear-gradient(135deg, transparent 0%, transparent 45%, rgba(255,255,255,0.45) 45%, rgba(255,255,255,0.45) 55%, transparent 55%, transparent 65%, rgba(255,255,255,0.45) 65%, rgba(255,255,255,0.45) 75%, transparent 75%);
 		}
 
-		#desktop-chat-reopen {
-			position: fixed;
-			top: 80px;
-			left: 24px;
-			z-index: 1000;
-			padding: 8px 14px;
-			border: none;
-			border-radius: 8px;
-			background: rgba(30, 30, 40, 0.9);
-			color: #fff;
-			font-size: 13px;
-			font-weight: 600;
-			cursor: pointer;
-			pointer-events: auto;
-			display: none;
-		}
-
-		#desktop-chat-reopen.visible { display: block; }
-
 		#chat-input-container {
 			display: flex;
 			gap: 8px;
@@ -1616,26 +1597,79 @@
 			flex-shrink: 0;
 			line-height: 1.35;
 		}
-		#dchat-code-editor {
+		.dchat-code-editor-wrap {
+			position: relative;
 			flex: 1;
 			min-height: 0;
 			width: 100%;
-			box-sizing: border-box;
-			resize: none;
 			border: 1px solid rgba(255, 255, 255, 0.1);
 			border-radius: 10px;
 			background: rgba(0, 0, 0, 0.35);
+			overflow: hidden;
+		}
+		.dchat-code-editor-wrap:focus-within {
+			border-color: rgba(99, 102, 241, 0.55);
+			background: rgba(0, 0, 0, 0.45);
+		}
+		.dchat-code-highlight {
+			position: absolute;
+			inset: 0;
+			margin: 0;
+			padding: 10px 12px;
+			overflow: hidden;
+			pointer-events: none;
+			white-space: pre;
+			word-wrap: normal;
+			overflow-wrap: normal;
+			tab-size: 2;
+			font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+			font-size: 12px;
+			line-height: 1.45;
 			color: #e2e8f0;
+			box-sizing: border-box;
+		}
+		.dchat-code-highlight code {
+			font: inherit;
+			color: inherit;
+			display: block;
+		}
+		.dchat-code-highlight .tok-keyword { color: #c4b5fd; }
+		.dchat-code-highlight .tok-string { color: #86efac; }
+		.dchat-code-highlight .tok-comment { color: #64748b; font-style: italic; }
+		.dchat-code-highlight .tok-number { color: #fdba74; }
+		.dchat-code-highlight .tok-function { color: #93c5fd; }
+		.dchat-code-highlight .tok-punct { color: #94a3b8; }
+		#dchat-code-editor {
+			position: relative;
+			z-index: 1;
+			display: block;
+			width: 100%;
+			height: 100%;
+			min-height: 0;
+			box-sizing: border-box;
+			resize: none;
+			border: none;
+			border-radius: 0;
+			background: transparent;
+			color: transparent;
+			caret-color: #e2e8f0;
+			-webkit-text-fill-color: transparent;
 			font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 			font-size: 12px;
 			line-height: 1.45;
 			padding: 10px 12px;
 			outline: none;
 			tab-size: 2;
+			overflow: auto;
 		}
-		#dchat-code-editor:focus {
-			border-color: rgba(99, 102, 241, 0.55);
-			background: rgba(0, 0, 0, 0.45);
+		#dchat-code-editor::placeholder {
+			color: rgba(255, 255, 255, 0.35);
+			-webkit-text-fill-color: rgba(255, 255, 255, 0.35);
+		}
+		#dchat-code-editor::selection {
+			background: rgba(99, 102, 241, 0.45);
+			color: transparent;
+			-webkit-text-fill-color: transparent;
 		}
 
 		/* After the base field/handle rules so these win on phones. */
@@ -1663,7 +1697,6 @@
 
 		/* Display-only / exported share view: hide editor chrome */
 		body.display-only #desktop-chat,
-		body.display-only #desktop-chat-reopen,
 		body.display-only #chat-overlay,
 		body.display-only #export-modal,
 		body.display-only #share-modal,
@@ -1871,6 +1904,26 @@
 					</div>
 					<div class="dchat-disabled-note" style="margin-top:8px;display:none">Background color is unavailable while AR/VR mode is active.</div>
 				</div>
+				<div id="dchat-hdri">
+					<div class="dchat-section-label" style="margin-bottom:8px">360 / HDRI Environment</div>
+					<div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:8px">
+						Equirectangular image for lighting and optional background (.hdr, .exr, .jpg, .png).
+					</div>
+					<input type="file" id="dchat-hdri-file" accept=".hdr,.exr,.jpg,.jpeg,.png,.webp,image/*,application/octet-stream" hidden />
+					<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+						<button type="button" id="dchat-hdri-pick" class="dchat-btn accent">Load file</button>
+						<button type="button" id="dchat-hdri-clear" class="dchat-btn secondary">Clear</button>
+					</div>
+					<div style="display:flex;gap:8px;margin-bottom:8px">
+						<input type="url" id="dchat-hdri-url" placeholder="https://…/env.hdr" autocomplete="off" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.12);background:var(--dchat-input-bg);color:var(--dchat-text);font-size:12px" />
+						<button type="button" id="dchat-hdri-url-load" class="dchat-btn secondary">Load URL</button>
+					</div>
+					<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:rgba(255,255,255,0.7);cursor:pointer;user-select:none;margin-bottom:6px">
+						<input type="checkbox" id="dchat-hdri-bg" checked />
+						Use as background (off = lighting only)
+					</label>
+					<div id="dchat-hdri-status" style="font-size:11px;color:rgba(255,255,255,0.4)"></div>
+				</div>
 				<div>
 					<div class="dchat-section-label" style="margin-bottom:8px">Navigation</div>
 					<select id="dchat-nav-type" style="width:100%; margin-bottom:6px;">
@@ -1926,7 +1979,10 @@
 					<span id="dchat-code-status"></span>
 				</div>
 				<div id="dchat-code-hint">Generated VR program (active scenes + session blocks). Edit and Apply to rebuild the scene.</div>
-				<textarea id="dchat-code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="// vr-exec blocks appear here after chat generates them…"></textarea>
+				<div class="dchat-code-editor-wrap">
+					<pre class="dchat-code-highlight" aria-hidden="true"><code id="dchat-code-highlight"></code></pre>
+					<textarea id="dchat-code-editor" spellcheck="false" autocomplete="off" autocapitalize="off" placeholder="// vr-exec blocks appear here after chat generates them…"></textarea>
+				</div>
 			</div>
 		</div>
 
@@ -1967,8 +2023,7 @@
 		<div class="dchat-resize corner corner-sw" data-dir="sw"></div>
 		<div class="dchat-resize corner corner-se" data-dir="se"></div>
 	</div>
-	<button id="desktop-chat-reopen">Show Chat</button>
-	<a id="editor-link" href="/">Open in editor</a>
+		<a id="editor-link" href="/">Open in editor</a>
 
 	<script type="importmap">
 	{
